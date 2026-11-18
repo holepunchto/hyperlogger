@@ -22,7 +22,6 @@
     "prettier-config-holepunch": "^2.0.0"
   },
   "dependencies": {
-    "bare-file-logger": "^1.2.3",
     "bare-system-logger": "^1.0.7"
   },
   "imports": {
