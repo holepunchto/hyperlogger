@@ -30,6 +30,10 @@
       "bare": "bare-path",
       "default": "path"
     },
+    "fs": {
+      "bare": "bare-fs",
+      "default": "fs"
+    },
     "#hrtime": {
       "bare": "bare-hrtime",
       "default": "./lib/hrtime.node.js"
