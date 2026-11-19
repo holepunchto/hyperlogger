@@ -1,62 +1,112 @@
-# hyperlogger
+# Hyperlogger
 
-## Files
+A small logger for Node.js and Bare, with structured JSON file output, log levels and labelled timers.
 
-| File                      | Purpose                                                                                          |
-| ------------------------- | ------------------------------------------------------------------------------------------------ |
-| `index.js`                | Public API. Replace the module-level comment with the package's main exported class or function. |
-| `lib/`                    | Internal implementation modules used by `index.js`.                                              |
-| `test/basic.js`           | First brittle test file. Replace the guidance comment with real behaviour tests.                 |
-| `test/all.js`             | Brittle runner that imports test files. Regenerate with `npm run test:generate`.                 |
-| `test/helpers/`           | Shared test helpers such as `create`, `collect`, temporary storage, or replication setup.        |
-| `examples/`               | Optional runnable examples. Do not rely on these as tests.                                       |
-| `CONTRIBUTING.md`         | Checklist for keeping the package in mafintosh / Holepunch style.                                |
-| `.vscode/extensions.json` | Recommends the Lunte VS Code extension for editor diagnostics.                                   |
+Bare also writes messages to the native system logger. In Node.js, the system logger is a no-op; use file logging or enable the development console output.
 
-# Testing On Node And Bare
+## Install
 
-`brittle` is the test framework. The runtime is chosen by the command you run:
+```sh
+npm install hyperlogger
+```
 
-```json
+## Usage
+
+```js
+const { Hyperlogger } = require('hyperlogger')
+
+const logger = new Hyperlogger({
+  logFile: './app.log',
+  logLevel: 'DEBUG'
+})
+
+logger.info('Starting download', { file: 'example.txt' })
+
+logger.time('download')
+// Perform the download...
+logger.timeEnd('download', { file: 'example.txt' })
+```
+
+## API
+
+#### `const logger = new Hyperlogger([options])`
+
+Create a logger. Options include:
+
+```js
 {
-  "test": "npm run test:node && npm run test:bare",
-  "test:node": "brittle-node test/all.js",
-  "test:bare": "brittle-bare test/all.js"
+  logLevel: 'INFO', // minimum severity, case insensitive
+  logFile: undefined, // optional path for newline-delimited JSON logs
+  logFileMaxSize: 100_000_000, // file size limit in bytes; clears the file when reached
+  dev: false, // also print messages to the console when logLevel is DEBUG
+  verbose: false // enable verboseDebug and verboseInfo
 }
 ```
 
-`brittle-node` runs the same tests in Node.js. `brittle-bare` runs the same tests
-in Bare, the JavaScript runtime used by Pear. Brittle itself does not magically
-switch runtimes inside one process; the npm scripts invoke separate runners.
+Without `logFile`, no file is written. In Node.js, without development console output or a log file, logging produces no output.
 
-This catches cases where code accidentally relies on Node-only globals or core
-modules. If a module must use runtime-specific packages, add an `imports` mapping
-so Node gets the Node module and Bare gets the Bare-compatible package.
+#### `logger.debug(...args)`
 
-# Editor Setup
+#### `logger.info(...args)`
 
-This repo includes `.vscode/extensions.json` recommending the Lunte extension:
+#### `logger.warn(...args)`
 
-```json
-{
-  "recommendations": ["holepunch.vscode-lunte"]
-}
+#### `logger.error(...args)`
+
+Log a message at the corresponding severity. Messages below `logLevel` are ignored.
+
+Arguments are joined with spaces to form the message. A final plain object is treated as structured attributes and stored separately in the file output.
+
+```js
+logger.info('Connected to', 'peer', { peerId: 'abc' })
 ```
 
-VS Code and Cursor can prompt contributors to install recommended extensions
-when they open the folder. The extension is the VS Code client for Lunte's
-language server; `npm run lint` still remains the source of truth in CI or local
-terminal checks.
+File records contain `timeUnixNano`, `observedTimeUnixNano`, `severityNumber`, `severityText`, `body` and `attributes`. Timestamps are epoch nanoseconds encoded as decimal strings, with millisecond precision.
 
-## Using This Template
+Attributes are normalised into JSON-safe values. Dates become ISO strings, bigints become decimal strings, and circular references become placeholders. Maps, Sets and binary values become console-style previews, limited to 32 entries or bytes.
 
-1. Copy this directory and rename it to your package name.
-2. Update `name`, `description`, `repository`, `bugs`, `homepage`, and `author` in `package.json`.
-3. Replace the comment in `index.js` with the package's real public API.
-4. Replace `lib/example-lib.js` with real internal modules.
-5. Replace the guidance comment in `test/basic.js` with real tests.
-6. Run `npm install`, then `npm test`.
+#### `logger.verboseDebug(...args)`
+
+#### `logger.verboseInfo(...args)`
+
+Log only when `verbose` is enabled. The usual severity filtering still applies.
+
+#### `logger.time(label)`
+
+Start a timer, replacing any existing timer with the same label.
+
+#### `logger.timeLog(label, ...args)`
+
+Log the elapsed time at INFO severity, followed by any additional message arguments and attributes. Keeps the timer running.
+
+#### `logger.timeEnd(label, ...args)`
+
+Log the elapsed time and remove the timer. Durations are formatted in milliseconds or seconds. Unknown timer labels are ignored.
+
+#### `logger.mute()`
+
+#### `logger.unmute()`
+
+Disable or restore all logging output.
+
+#### `const logs = parseLogs(rawLogs)`
+
+Parse a newline-delimited JSON log string into an array of records. Empty lines are ignored; invalid JSON throws.
+
+```js
+const { parseLogs } = require('hyperlogger')
+
+const logs = parseLogs(rawLogs)
+```
+
+#### `LEVELS`
+
+Exported severity numbers: `TRACE: 1`, `DEBUG: 5`, `INFO: 9`, `WARN: 13`, `ERROR: 17`.
+
+#### `logger.span(label, fn, metadata)`
+
+Not implemented yet. Calling this method throws.
 
 ## License
 
-MIT
+Apache-2.0
