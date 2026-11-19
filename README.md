@@ -107,6 +107,10 @@ Exported severity numbers: `TRACE: 1`, `DEBUG: 5`, `INFO: 9`, `WARN: 13`, `ERROR
 
 Not implemented yet. Calling this method throws.
 
+When implemented, this method will establish an async context that carries IDs and metadata through nested function calls and asynchronous operations, including across await boundaries.
+
+It will reuse the current trace ID, or generate one if none is present. Each subsequent call will generate a new span ID and, if an outer span is active, use that span’s ID as the parent span ID. Logs written within the context will automatically include the active trace and span IDs.
+
 ## License
 
 Apache-2.0
