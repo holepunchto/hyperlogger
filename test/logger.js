@@ -69,3 +69,40 @@ test('logger serializes normalized attributes without mutating the input', async
   t.is(attrs.count, 42n)
   t.is(attrs.self, attrs)
 })
+
+test('timing log output is JSON with timing in the log body', async (t) => {
+  const dir = await t.tmp()
+  const logFile = path.join(dir, 'logs')
+  const logger = new Hyperlogger({ logFile })
+
+  t.teardown(() => logger._file.close())
+
+  const label = 'test'
+
+  logger.time(label)
+  logger.timeLog(label, 'this is a test', { test: 'success' })
+  logger.timeEnd(label, { test: 'end' })
+
+  const rawLogs = fs.readFileSync(logFile, { encoding: 'utf8' })
+  const logs = parseLogs(rawLogs)
+
+  const withoutTimestamps = ({ timeUnixNano, observedTimeUnixNano, ...log }) => log
+  const timingLogs = logs.map(withoutTimestamps)
+
+  t.alike(
+    timingLogs.map(({ body, ...fields }) => fields),
+    [
+      { severityNumber: LEVELS.INFO, severityText: 'INFO', attributes: { test: 'success' } },
+      { severityNumber: LEVELS.INFO, severityText: 'INFO', attributes: { test: 'end' } }
+    ],
+    'timing logs contain exactly the expected fields apart from timestamps and body'
+  )
+  t.ok(
+    /^test: \d+\.\d{3}(?:ms|s) this is a test$/.test(timingLogs[0]?.body),
+    'timeLog body contains the label, formatted duration and message'
+  )
+  t.ok(
+    /^test: \d+\.\d{3}(?:ms|s)$/.test(timingLogs[1]?.body),
+    'timeEnd body contains only the label and formatted duration'
+  )
+})
