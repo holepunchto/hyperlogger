@@ -25,6 +25,7 @@ const cases = [
   ['epoch date', new Date(0), '1970-01-01T00:00:00.000Z'],
   ['invalid date', new Date(NaN), '[Invalid Date]'],
   ['empty array', [], []],
+  ['large array', [...Array(1_000).keys()], [...Array(100).keys(), '... 900 more items']],
   ['empty object', {}, {}],
   ['map', new Map([['key', 'value']]), "Map(1) { 'key' => 'value' }"],
   ['set', new Set([1]), 'Set(1) { 1 }'],
@@ -136,7 +137,7 @@ test('normalise - throwing getters preserve sibling attributes', (t) => {
   t.alike(normaliseAttribute(input), { good: '42', bad: '[Unserializable]' })
 })
 
-test('normalise - throwing array getters', (t) => {
+test('normalise - a throwing array getter keeps good elements', (t) => {
   const input = [1, 2]
   Object.defineProperty(input, '0', {
     get() {
