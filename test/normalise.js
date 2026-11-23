@@ -77,6 +77,18 @@ test('normalise - errors preserve name, message and stack', (t) => {
   })
 })
 
+test('normalise - errors preserve name, message, stack, and code when present', (t) => {
+  const error = new TypeError('bad input')
+  error.stack = 'TypeError: bad input\n    at example'
+  error.code = 'TEST_FAILURE'
+  t.alike(normaliseAttribute(error), {
+    name: 'TypeError',
+    message: 'bad input',
+    stack: error.stack,
+    code: error.code
+  })
+})
+
 test('normalise - circular objects and arrays preserve other values', (t) => {
   const object = { count: 1 }
   object.self = object
