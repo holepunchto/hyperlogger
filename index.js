@@ -3,7 +3,7 @@ const SystemLog = require('#system-logger')
 const hrtime = require('#hrtime')
 const normaliseAttribute = require('./lib/normalise.js')
 
-const LEVELS = { TRACE: 1, DEBUG: 5, INFO: 9, WARN: 13, ERROR: 17 }
+const LEVELS = { DEBUG: 5, INFO: 9, WARN: 13, ERROR: 17 }
 
 class Hyperlogger {
   static LEVELS = LEVELS
@@ -78,10 +78,6 @@ class Hyperlogger {
   timeEnd(label, ...data) {
     this.timeLog(label, ...data)
     this._timers.delete(label)
-  }
-
-  span(label, fn, metadata) {
-    throw new Error('to be implemented')
   }
 
   _write(level, ...args) {
