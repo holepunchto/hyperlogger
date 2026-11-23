@@ -5,8 +5,8 @@ const Hyperlogger = require('../index.js')
 
 test('check all standard log types produce outputs', async (t) => {
   const dir = await t.tmp()
-  const logFile = path.join(dir, 'logs')
-  const logger = new Hyperlogger({ logLevel: 'DEBUG', logFile })
+  const file = path.join(dir, 'logs')
+  const logger = new Hyperlogger({ level: 'DEBUG', file })
 
   t.teardown(() => logger._file.close())
 
@@ -19,7 +19,7 @@ test('check all standard log types produce outputs', async (t) => {
   logger.warn(msg1, msg2, attr)
   logger.error(msg1, msg2, attr)
 
-  const rawLogs = fs.readFileSync(logFile, { encoding: 'utf8' })
+  const rawLogs = fs.readFileSync(file, { encoding: 'utf8' })
   const logs = Hyperlogger.parseLogs(rawLogs)
 
   const expectedLogs = ['DEBUG', 'INFO', 'WARN', 'ERROR'].map((level) => ({
@@ -42,8 +42,8 @@ test('check all standard log types produce outputs', async (t) => {
 
 test('logger serializes normalized attributes without mutating the input', async (t) => {
   const dir = await t.tmp()
-  const logFile = path.join(dir, 'logs')
-  const logger = new Hyperlogger({ logFile })
+  const file = path.join(dir, 'logs')
+  const logger = new Hyperlogger({ file })
   t.teardown(() => logger._file.close())
   logger._system.info = () => {}
 
@@ -58,7 +58,7 @@ test('logger serializes normalized attributes without mutating the input', async
 
   logger.info('normalized', attrs)
 
-  const logs = Hyperlogger.parseLogs(fs.readFileSync(logFile, 'utf8'))
+  const logs = Hyperlogger.parseLogs(fs.readFileSync(file, 'utf8'))
   t.is(logs.length, 1)
   t.alike(logs[0].attributes, {
     count: '42',
@@ -72,8 +72,8 @@ test('logger serializes normalized attributes without mutating the input', async
 
 test('timing log output is JSON with timing in the log body', async (t) => {
   const dir = await t.tmp()
-  const logFile = path.join(dir, 'logs')
-  const logger = new Hyperlogger({ logFile })
+  const file = path.join(dir, 'logs')
+  const logger = new Hyperlogger({ file })
 
   t.teardown(() => logger._file.close())
 
@@ -83,7 +83,7 @@ test('timing log output is JSON with timing in the log body', async (t) => {
   logger.timeLog(label, 'this is a test', { test: 'success' })
   logger.timeEnd(label, { test: 'end' })
 
-  const rawLogs = fs.readFileSync(logFile, { encoding: 'utf8' })
+  const rawLogs = fs.readFileSync(file, { encoding: 'utf8' })
   const logs = Hyperlogger.parseLogs(rawLogs)
 
   const withoutTimestamps = ({ timeUnixNano, observedTimeUnixNano, ...log }) => log

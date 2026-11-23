@@ -6,6 +6,16 @@ const normaliseAttribute = require('./lib/normalise.js')
 const LEVELS = { DEBUG: 5, INFO: 9, WARN: 13, ERROR: 17 }
 
 class Hyperlogger {
+  constructor({ dev = false, verbose = false, file, level = 'INFO', maxSize } = {}) {
+    this._muted = false
+    this._dev = dev
+    this.verbose = verbose
+    this.level = this._checkLevel(level)
+    this._system = new SystemLog()
+    this._file = file ? new FileLog(file, { maxSize: maxSize || 100_000_000 }) : null
+    this._timers = new Map()
+  }
+
   static LEVELS = LEVELS
 
   static parseLogs(rawLogs) {
@@ -21,14 +31,10 @@ class Hyperlogger {
     return logs
   }
 
-  constructor({ dev = false, verbose = false, logFile, logLevel = 'INFO', logFileMaxSize } = {}) {
-    this._muted = false
-    this._dev = dev
-    this.verbose = verbose
-    this.level = LEVELS[logLevel.toUpperCase()] ?? LEVELS.INFO
-    this._system = new SystemLog()
-    this._file = logFile ? new FileLog(logFile, { maxSize: logFileMaxSize || 100_000_000 }) : null
-    this._timers = new Map()
+  _checkLevel(level) {
+    if (!Object.hasOwn(LEVELS, level)) throw new RangeError(`Invalide log level: ${level}`)
+
+    return LEVELS[level]
   }
 
   mute() {
