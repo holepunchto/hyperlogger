@@ -47,9 +47,12 @@ for (const [name, input, expected] of cases) {
 }
 
 test('normalise - nested arrays and objects preserve structure', (t) => {
-  t.alike(normaliseAttribute({ values: [1n, { missing: undefined }, [NaN, false]] }), {
-    values: ['1', { missing: '[Undefined]' }, ['NaN', false]]
-  })
+  t.alike(
+    normaliseAttribute({ values: [1n, { missing: undefined }, [NaN, false]] }, { maxDepth: 10 }),
+    {
+      values: ['1', { missing: '[Undefined]' }, ['NaN', false]]
+    }
+  )
 })
 
 test('normalise - null-prototype objects', (t) => {
@@ -100,7 +103,7 @@ test('normalise - frozen input is not mutated', (t) => {
   const nested = Object.freeze({ count: 42n })
   const items = Object.freeze([nested])
   const input = Object.freeze({ items })
-  const result = normaliseAttribute(input)
+  const result = normaliseAttribute(input, { maxDepth: 10 })
   t.alike(result, { items: [{ count: '42' }] })
   t.is(input.items, items)
   t.is(items[0], nested)
@@ -163,7 +166,7 @@ test('normalise - throwing proxies become placeholders', (t) => {
 test('normalise - depth limit keeps sibling attributes', (t) => {
   let deep = { leaf: true }
   for (let i = 0; i < 20; i++) deep = { child: deep }
-  const result = normaliseAttribute({ deep, sibling: 42 })
+  const result = normaliseAttribute({ deep, sibling: 42 }, { maxDepth: 10 })
   let node = result.deep
   for (let i = 0; i < 9; i++) node = node.child
   t.is(node, '[MaxDepth]')

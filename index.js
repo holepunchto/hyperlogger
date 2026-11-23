@@ -1,12 +1,13 @@
 const FileLog = require('./lib/file-logger')
 const SystemLog = require('#system-logger')
 const hrtime = require('#hrtime')
-const normaliseAttribute = require('./lib/normalise.js')
+const normaliseAttributes = require('./lib/normalise.js')
+const { createOptions } = normaliseAttributes
 
 const LEVELS = { DEBUG: 5, INFO: 9, WARN: 13, ERROR: 17 }
 
 class Hyperlogger {
-  constructor({ dev = false, verbose = false, file, level = 'INFO', maxSize } = {}) {
+  constructor({ dev = false, verbose = false, file, level = 'INFO', maxSize, maxDepth } = {}) {
     this._muted = false
     this._dev = dev
     this.verbose = verbose
@@ -14,6 +15,7 @@ class Hyperlogger {
     this._system = new SystemLog()
     this._file = file ? new FileLog(file, { maxSize: maxSize || 100_000_000 }) : null
     this._timers = new Map()
+    this._normaliseOpts = createOptions({ maxDepth })
   }
 
   static LEVELS = LEVELS
@@ -93,7 +95,7 @@ class Hyperlogger {
     // if log attributes have been provided extract them
     let attributes = {}
     if (isPlainObject(args[args.length - 1])) {
-      attributes = normaliseAttribute(args.pop())
+      attributes = normaliseAttributes(args.pop(), this._normaliseOpts)
     }
 
     const timeUnixNano = (BigInt(Date.now()) * 1_000_000n).toString()
