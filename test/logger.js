@@ -1,7 +1,7 @@
 const test = require('brittle')
 const fs = require('fs')
 const path = require('path')
-const { Hyperlogger, parseLogs, LEVELS } = require('../index.js')
+const Hyperlogger = require('../index.js')
 
 test('check all standard log types produce outputs', async (t) => {
   const dir = await t.tmp()
@@ -20,12 +20,12 @@ test('check all standard log types produce outputs', async (t) => {
   logger.error(msg1, msg2, attr)
 
   const rawLogs = fs.readFileSync(logFile, { encoding: 'utf8' })
-  const logs = parseLogs(rawLogs)
+  const logs = Hyperlogger.parseLogs(rawLogs)
 
   const expectedLogs = ['DEBUG', 'INFO', 'WARN', 'ERROR'].map((level) => ({
     timeUnixNano: '0',
     observedTimeUnixNano: '0',
-    severityNumber: LEVELS[level],
+    severityNumber: Hyperlogger.LEVELS[level],
     severityText: level,
     body: `${msg1} ${msg2}`,
     attributes: attr
@@ -58,7 +58,7 @@ test('logger serializes normalized attributes without mutating the input', async
 
   logger.info('normalized', attrs)
 
-  const logs = parseLogs(fs.readFileSync(logFile, 'utf8'))
+  const logs = Hyperlogger.parseLogs(fs.readFileSync(logFile, 'utf8'))
   t.is(logs.length, 1)
   t.alike(logs[0].attributes, {
     count: '42',
@@ -84,7 +84,7 @@ test('timing log output is JSON with timing in the log body', async (t) => {
   logger.timeEnd(label, { test: 'end' })
 
   const rawLogs = fs.readFileSync(logFile, { encoding: 'utf8' })
-  const logs = parseLogs(rawLogs)
+  const logs = Hyperlogger.parseLogs(rawLogs)
 
   const withoutTimestamps = ({ timeUnixNano, observedTimeUnixNano, ...log }) => log
   const timingLogs = logs.map(withoutTimestamps)
@@ -92,8 +92,12 @@ test('timing log output is JSON with timing in the log body', async (t) => {
   t.alike(
     timingLogs.map(({ body, ...fields }) => fields),
     [
-      { severityNumber: LEVELS.INFO, severityText: 'INFO', attributes: { test: 'success' } },
-      { severityNumber: LEVELS.INFO, severityText: 'INFO', attributes: { test: 'end' } }
+      {
+        severityNumber: Hyperlogger.LEVELS.INFO,
+        severityText: 'INFO',
+        attributes: { test: 'success' }
+      },
+      { severityNumber: Hyperlogger.LEVELS.INFO, severityText: 'INFO', attributes: { test: 'end' } }
     ],
     'timing logs contain exactly the expected fields apart from timestamps and body'
   )

@@ -6,6 +6,21 @@ const normaliseAttribute = require('./lib/normalise.js')
 const LEVELS = { TRACE: 1, DEBUG: 5, INFO: 9, WARN: 13, ERROR: 17 }
 
 class Hyperlogger {
+  static LEVELS = LEVELS
+
+  static parseLogs(rawLogs) {
+    const logLines = rawLogs.split('\n')
+
+    const logs = []
+    for (const log of logLines) {
+      // ignore final newline
+      if (log === '') continue
+      logs.push(JSON.parse(log))
+    }
+
+    return logs
+  }
+
   constructor({ dev = false, verbose = false, logFile, logLevel = 'INFO', logFileMaxSize } = {}) {
     this._muted = false
     this._dev = dev
@@ -103,24 +118,7 @@ class Hyperlogger {
   }
 }
 
-function parseLogs(rawLogs) {
-  const logLines = rawLogs.split('\n')
-
-  const logs = []
-  for (const log of logLines) {
-    // ignore final newline
-    if (log === '') continue
-    logs.push(JSON.parse(log))
-  }
-
-  return logs
-}
-
-module.exports = {
-  Hyperlogger,
-  parseLogs,
-  LEVELS
-}
+module.exports = Hyperlogger
 
 function formatElapsed(ns) {
   const ms = Number(ns) / 1e6
