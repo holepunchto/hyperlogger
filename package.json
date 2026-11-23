@@ -40,17 +40,13 @@
     "#system-logger": {
       "bare": "bare-system-logger",
       "default": "./lib/system-logger.node.js"
-    },
-    "#file-logger": {
-      "bare": "bare-file-logger",
-      "default": "./lib/file-logger.node.js"
     }
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/holepunchto/hyperlogger"
   },
-  "author": "Your Name",
+  "author": "Holepunch",
   "license": "Apache-2.0",
   "bugs": {
     "url": "https://github.com/holepunchto/hyperlogger/issues"
