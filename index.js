@@ -7,7 +7,15 @@ const { createOptions } = normaliseAttributes
 const LEVELS = { DEBUG: 5, INFO: 9, WARN: 13, ERROR: 17 }
 
 class Hyperlogger {
-  constructor({ dev = false, verbose = false, file, level = 'INFO', maxSize, maxDepth } = {}) {
+  constructor({
+    dev = false,
+    verbose = false,
+    file,
+    level = 'INFO',
+    maxSize,
+    maxDepth,
+    maxBytes
+  } = {}) {
     this._muted = false
     this._dev = dev
     this.verbose = verbose
@@ -15,7 +23,7 @@ class Hyperlogger {
     this._system = new SystemLog()
     this._file = file ? new FileLog(file, { maxSize: maxSize || 100_000_000 }) : null
     this._timers = new Map()
-    this._normaliseOpts = createOptions({ maxDepth })
+    this._normaliseOpts = createOptions({ maxDepth, maxBytes })
   }
 
   static LEVELS = LEVELS
