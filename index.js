@@ -50,8 +50,8 @@ class Hyperlogger {
   } = {}) {
     this._muted = false
     this._dev = dev
-    this.verbose = verbose
-    this.level = this._checkLevel(level)
+    this._verbose = verbose
+    this._level = this._checkLevel(level)
     this._system = new SystemLog()
     this._timers = new Map()
     this._normaliseOpts = createOptions({ maxDepth, maxBytes })
@@ -110,7 +110,7 @@ class Hyperlogger {
   }
 
   verboseDebug(...args) {
-    if (!this.verbose) return
+    if (!this._verbose) return
     this._write('DEBUG', ...args)
   }
 
@@ -119,7 +119,7 @@ class Hyperlogger {
   }
 
   verboseInfo(...args) {
-    if (!this.verbose) return
+    if (!this._verbose) return
     this._write('INFO', ...args)
   }
 
@@ -148,7 +148,7 @@ class Hyperlogger {
 
   _write(level, ...args) {
     if (this._muted || this._closed) return
-    if (LEVELS[level] < this.level) return
+    if (LEVELS[level] < this._level) return
 
     // if log attributes have been provided extract them
     let attributes = {}
@@ -158,11 +158,11 @@ class Hyperlogger {
 
     const body = args.join(' ')
 
-    const log = this._buildLog(level, body, attributes)
+    const log = this._buildRecord(level, body, attributes)
     const method = level.toLowerCase()
 
     // just for dev purposes
-    if (this._dev && this.level === LEVELS.DEBUG) {
+    if (this._dev && this._level === LEVELS.DEBUG) {
       const log = console[method] || console.log
       log(...args)
     }
@@ -172,7 +172,7 @@ class Hyperlogger {
     if (this._file) this._file.write(log)
   }
 
-  _buildLog(level, body, attributes) {
+  _buildRecord(level, body, attributes) {
     const timeUnixNano = (BigInt(Date.now()) * 1_000_000n).toString()
 
     return {
