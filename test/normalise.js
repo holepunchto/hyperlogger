@@ -281,3 +281,79 @@ test('normalise - binary views respect byte offsets and lengths', (t) => {
   ).join(' ')
   t.is(normaliseAttribute(words), `Uint16Array<${expected}>`)
 })
+
+test('normalise - long strings are cut with a marker', (t) => {
+  t.is(
+    normaliseAttribute('a'.repeat(10_000)),
+    'a'.repeat(10_000),
+    'exactly at the limit is kept whole'
+  )
+  t.is(normaliseAttribute('a'.repeat(10_005)), 'a'.repeat(10_000) + '... 5 more characters')
+  t.alike(normaliseAttribute({ s: 'b'.repeat(10_001) }), {
+    s: 'b'.repeat(10_000) + '... 1 more characters'
+  })
+})
+
+test('normalise - string cut does not split a surrogate pair', (t) => {
+  const input = 'a'.repeat(9_999) + '😀' + 'tail'
+  const result = normaliseAttribute(input)
+  t.is(result, 'a'.repeat(9_999) + '... 6 more characters')
+  t.ok(!JSON.stringify(result).includes('\\ud83d'), 'no lone surrogate escape in the JSON')
+})
+
+// Byte budget. Expected values were worked out by hand from the cost rules before
+// the tests were first run: 2 per {} or [], key.length + 4 per key, length + 2 per
+// string, 8 per number, 1 per array element, checked before each field or element.
+
+test('normalise - budget chops the remaining fields of a large object', (t) => {
+  const input = Object.fromEntries(Array.from({ length: 500 }, (_, i) => ['k' + i, i]))
+  const result = normaliseAttribute(input, normaliseAttribute.createOptions({ maxBytes: 100 }))
+  const keys = Object.keys(result)
+
+  t.alike(
+    keys,
+    ['k0', 'k1', 'k2', 'k3', 'k4', 'k5', 'k6', '...'],
+    'keeps the first fields in order'
+  )
+  t.is(result['...'], '493 more keys', 'says how many fields were dropped')
+  for (let i = 0; i <= 6; i++) t.is(result['k' + i], i, 'kept values are untouched')
+  t.is(JSON.stringify(result).length, 72)
+})
+
+test('normalise - budget is shared, so a large first key crowds out its siblings', (t) => {
+  const a = Object.fromEntries(Array.from({ length: 50 }, (_, i) => ['f' + i, 'x']))
+  const result = normaliseAttribute(
+    { a, b: { y: 1 } },
+    normaliseAttribute.createOptions({ maxBytes: 60, maxDepth: 5 })
+  )
+
+  t.alike(result, {
+    a: { f0: 'x', f1: 'x', f2: 'x', f3: 'x', f4: 'x', f5: 'x', '...': '44 more keys' },
+    '...': '1 more keys'
+  })
+})
+
+test('normalise - budget chops the remaining elements of an array', (t) => {
+  const input = Array.from({ length: 30 }, (_, i) => i)
+  const result = normaliseAttribute(input, normaliseAttribute.createOptions({ maxBytes: 40 }))
+
+  t.alike(result, [0, 1, 2, 3, 4, '... 25 more items'])
+})
+
+test('normalise - values under the budget are not chopped', (t) => {
+  const input = { name: 'hyperlogger', count: 3, tags: ['a', 'b'] }
+  const result = normaliseAttribute(input, normaliseAttribute.createOptions({ maxBytes: 200 }))
+
+  t.alike(result, input)
+})
+
+test('normalise - default budget keeps a huge object close to 256 KB', (t) => {
+  const input = Object.fromEntries(Array.from({ length: 50_000 }, (_, i) => ['key' + i, 'val' + i]))
+  const result = normaliseAttribute(input)
+  const keys = Object.keys(result)
+  const bytes = JSON.stringify(result).length
+
+  t.is(keys.length, 12_926 + 1, 'kept fields plus the marker')
+  t.is(result['...'], '37074 more keys')
+  t.ok(Math.abs(bytes - 262_144) <= 50, `JSON is ${bytes} bytes, within 50 of the budget`)
+})
