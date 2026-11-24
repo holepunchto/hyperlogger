@@ -156,16 +156,9 @@ class Hyperlogger {
       attributes = normaliseAttributes(args.pop(), this._normaliseOpts)
     }
 
-    const timeUnixNano = (BigInt(Date.now()) * 1_000_000n).toString()
+    const body = args.join(' ')
 
-    const log = {
-      timeUnixNano,
-      observedTimeUnixNano: timeUnixNano,
-      severityNumber: LEVELS[level],
-      severityText: level,
-      body: args.join(' '),
-      attributes
-    }
+    const log = this._buildLog(level, body, attributes)
     const method = level.toLowerCase()
 
     // just for dev purposes
@@ -177,6 +170,19 @@ class Hyperlogger {
     this._system[method](...args)
 
     if (this._file) this._file.write(log)
+  }
+
+  _buildLog(level, body, attributes) {
+    const timeUnixNano = (BigInt(Date.now()) * 1_000_000n).toString()
+
+    return {
+      timeUnixNano,
+      observedTimeUnixNano: timeUnixNano,
+      severityNumber: LEVELS[level],
+      severityText: level,
+      body,
+      attributes
+    }
   }
 }
 
