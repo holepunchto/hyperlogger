@@ -3,7 +3,12 @@ const fs = require('fs')
 const path = require('path')
 const FileLog = require('../lib/file-logger')
 
-test('file-logger - 10 trailing log files are created correctly', async (t) => {
+const RETRY_INTERVAL = 1000 // REOPEN_RETRY_INTERVAL in lib/file-logger.js
+
+// longer than setup's 40-byte maxSize on its own, so writing it rotates; short lines don't
+const BIG = { body: 'fills past maxSize'.padEnd(60, '.') }
+
+test('file-logger - rotation keeps the live file plus 9 older ones', async (t) => {
   const dir = await t.tmp()
   const file = 'test-file.json'
   const filePath = path.join(dir, file)
@@ -19,11 +24,12 @@ test('file-logger - 10 trailing log files are created correctly', async (t) => {
     }
   }
 
-  const log = new FileLog(filePath, { maxSize: 128, rotateInterval: 19 })
+  // each line is bigger than maxSize, so every write rotates
+  const log = new FileLog(filePath, { maxSize: 128 })
+  t.teardown(() => log.close())
 
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 12; i++) {
     log.write(testLog)
-    await new Promise((resolve) => setTimeout(resolve, 20))
   }
 
   const logFiles = fs.readdirSync(dir)
@@ -40,8 +46,253 @@ test('file-logger - 10 trailing log files are created correctly', async (t) => {
   )
 })
 
+test('file-logger - rotation keeps every line, in order, with the right number per file', async (t) => {
+  const lineSize = line(0).length
+  // rotation happens once the file goes over maxSize, so this fits exactly 6 lines
+  const { file, log } = await setup(t, { maxSize: 6 * lineSize - 1 })
+
+  for (let i = 0; i < 30; i++) log.write(record(i))
+
+  for (let i = 1; i <= 5; i++) t.is(lines(`${file}.${i}`).length, 6, `.${i} holds 6 lines`)
+  t.is(lines(file).length, 0, 'the live file is empty, having just rotated')
+  t.is(fs.existsSync(`${file}.6`), false, 'no more files than needed')
+
+  t.alike(
+    readAll(file),
+    Array.from({ length: 30 }, (_, i) => line(i).trimEnd()),
+    'every line is kept, oldest file first'
+  )
+})
+
+test('file-logger - the size count matches the real file', async (t) => {
+  const dir = await t.tmp()
+  const file = path.join(dir, 'app.log')
+  fs.writeFileSync(file, 'x'.repeat(100) + '\n')
+
+  const log = new FileLog(file, { maxSize: 1000 })
+  t.teardown(() => log.close())
+  t.is(log._size, 101, 'starts from the existing file size')
+
+  for (let i = 0; i < 10; i++) log.write(record(i))
+  t.is(log._size, fs.statSync(file).size, 'after writes')
+
+  // crosses maxSize and rotates at least once
+  for (let i = 10; i < 40; i++) log.write(record(i))
+
+  t.ok(fs.existsSync(`${file}.1`), 'a rotation happened')
+  t.is(log._size, fs.statSync(file).size, 'recorded file size is accurate after a rotation')
+
+  log.clear()
+  t.is(log._size, 0, 'recorded file size is zero after being cleared')
+  t.is(log._size, fs.statSync(file).size, 'recorded and actual file size agree after clear')
+
+  log.write(record(0))
+  t.is(log._size, fs.statSync(file).size, 'recorded file size is accurate when writing after clear')
+})
+
+test('file-logger - rotates once the file goes over maxSize, not when it reaches it', async (t) => {
+  const lineSize = line(0).length
+
+  const exact = await setup(t, { maxSize: 2 * lineSize })
+  exact.log.write(record(0))
+  exact.log.write(record(1))
+  t.is(fs.existsSync(`${exact.file}.1`), false, 'landing exactly on maxSize does not rotate')
+  t.is(lines(exact.file).length, 2)
+
+  exact.log.write(record(2))
+  t.is(lines(`${exact.file}.1`).length, 3, 'the next write goes over and rotates')
+
+  const over = await setup(t, { maxSize: 2 * lineSize - 1 })
+  over.log.write(record(0))
+  over.log.write(record(1))
+  t.is(lines(`${over.file}.1`).length, 2, 'one byte over maxSize rotates')
+})
+
+test('file-logger - a failed rotation does not throw and logging carries on', async (t) => {
+  const { file, log } = await setup(t)
+
+  // the folder becomes read-only
+  stubfs(t, 'renameSync', fail('EACCES'))
+
+  t.execution(() => log.write(BIG), 'rotation failure is swallowed')
+  t.not(log._fd, -1, 'still has a file to write to')
+  t.is(fs.existsSync(`${file}.1`), false, 'nothing was rotated')
+
+  log.write({ body: 'after the failure' })
+  t.ok(
+    fs.readFileSync(file, 'utf8').includes('after the failure'),
+    'kept appending to the same file'
+  )
+})
+
+test('file-logger - writes reopen the file once it can be opened again', async (t) => {
+  const { file, log } = await setup(t)
+  const time = clock(t)
+
+  const openSync = stubfs(t, 'openSync', fail('EACCES'))
+
+  // rotates, then the reopen fails
+  log.write(BIG)
+
+  t.is(log._fd, -1, 'reopen failed, so there is no handle')
+  t.execution(() => log.write({ body: 'dropped' }), 'writing with no handle does not throw')
+
+  fs.openSync = openSync
+  log.write({ body: 'too soon' })
+  t.is(log._fd, -1, 'still waiting out the retry interval')
+
+  time.advance(RETRY_INTERVAL)
+
+  log.write({ body: 'back again' })
+
+  t.not(log._fd, -1, 'a write after the interval reopened the file')
+  t.ok(contents(file).includes('back again'), 'can append to the reopened file')
+  t.absent(contents(file).includes('too soon'), 'lines with no handle were dropped')
+})
+
+test('file-logger - reopen attempts are limited to one per retry interval', async (t) => {
+  const { log } = await setup(t)
+  const time = clock(t)
+
+  let attempts = 0
+  stubfs(t, 'openSync', () => {
+    attempts++
+    fail('EACCES')()
+  })
+
+  // reopen on rotation fails
+  log.write(BIG)
+  t.is(log._fd, -1)
+
+  const before = attempts
+  for (let i = 0; i < 100; i++) log.write({ body: 'dropped ' + i })
+  t.is(attempts, before + 1, 'one attempt for 100 writes inside one interval')
+
+  // retry just before interval fails
+  time.advance(RETRY_INTERVAL - 1)
+  log.write({ body: 'still inside the interval' })
+  t.is(attempts, before + 1, 'no attempt just before the interval ends')
+
+  time.advance(1)
+  for (let i = 0; i < 100; i++) log.write({ body: 'next interval ' + i })
+  t.is(attempts, before + 2, 'one more attempt in the next interval')
+})
+
+test('file-logger - a closed logger never reopens, even after a failure', async (t) => {
+  const { log } = await setup(t)
+  const time = clock(t)
+
+  const openSync = stubfs(t, 'openSync', fail('EACCES'))
+  log.write(BIG)
+  t.is(log._fd, -1)
+
+  log.close()
+
+  let opens = 0
+  fs.openSync = (...args) => {
+    opens++
+    return openSync(...args)
+  }
+
+  time.advance(RETRY_INTERVAL)
+  log.write({ body: 'after close' })
+  log._gc()
+
+  t.is(log._fd, -1, 'a closed logger stays closed')
+  t.is(log._reopen(), false)
+  t.is(opens, 0, 'nothing tried to open the file')
+})
+
+test('file-logger - writing after close does nothing', async (t) => {
+  const { file, log } = await setup(t, { maxSize: 1000 })
+  const time = clock(t)
+
+  log.write({ body: 'before close' })
+  const contents = fs.readFileSync(file, 'utf8')
+  log.close()
+
+  let opens = 0
+  const openSync = stubfs(t, 'openSync', (...args) => {
+    opens++
+    return openSync(...args)
+  })
+
+  log.write({ body: 'after close' })
+  time.advance(RETRY_INTERVAL)
+  log.write({ body: 'after close, past the retry interval' })
+
+  t.is(opens, 0, 'no file was opened')
+  t.is(fs.readFileSync(file, 'utf8'), contents, 'the file is unchanged')
+})
+
+test('file-logger - a failing fstat on reopen prevents file being opened', async (t) => {
+  let open = 0
+
+  const openSync = stubfs(t, 'openSync', (...args) => {
+    open++
+    return openSync(...args)
+  })
+  const closeSync = stubfs(t, 'closeSync', (fd) => {
+    open--
+    return closeSync(fd)
+  })
+
+  const { file, log } = await setup(t)
+
+  // reopen can't read the new file size
+  stubfs(t, 'fstatSync', fail('EIO'))
+  log.write(BIG)
+
+  t.is(log._fd, -1, 'the reopen fails')
+  t.is(open, 0, 'there are no open files')
+
+  log.write({ body: 'after the reopen' })
+  t.ok(
+    fs.readFileSync(`${file}.1`, 'utf8').includes('fills past maxSize'),
+    'first line was rotated'
+  )
+  t.ok(!fs.readFileSync(file, 'utf8').includes('after the reopen'), 'did not write to the new file')
+})
+
+test('file-logger - never holds more than one handle', async (t) => {
+  const dir = await t.tmp()
+  const file = path.join(dir, 'app.log')
+
+  let open = 0
+  let most = 0
+  const openSync = stubfs(t, 'openSync', (...args) => {
+    const fd = openSync(...args)
+    most = Math.max(most, ++open)
+    return fd
+  })
+  const closeSync = stubfs(t, 'closeSync', (fd) => {
+    closeSync(fd)
+    open--
+  })
+
+  const log = new FileLog(file, { maxSize: 10 })
+
+  for (let i = 0; i < 25; i++) log.write({ body: 'fills past maxSize ' + i }) // each one rotates
+
+  stubfs(t, 'renameSync', fail('EACCES'))
+  log.write({ body: 'fills past maxSize' }) // a failed rotation
+  log._reopen() // calling it while a handle is open must not open another
+  log.clear()
+
+  t.is(open, 1, 'one handle while running')
+
+  log.close()
+  log.close()
+  log.clear()
+  log._gc()
+  log.write({ body: 'after close' })
+
+  t.is(open, 0, 'none after close')
+  t.is(most, 1, 'never more than one at any point')
+})
+
 // Swap an fs function for the length of one test
-function stub(t, name, fn) {
+function stubfs(t, name, fn) {
   const original = fs[name]
 
   fs[name] = fn
@@ -53,110 +304,65 @@ function stub(t, name, fn) {
   return original
 }
 
-const fail = (code) => () => {
-  const err = new Error(code)
-  err.code = code
+// Control Date.now for the length of one test
+function clock(t) {
+  const now = Date.now
+  let time = now()
 
-  throw err
+  Date.now = () => time
+
+  t.teardown(() => {
+    Date.now = now
+  })
+
+  return {
+    advance(ms) {
+      time += ms
+    }
+  }
+}
+
+function fail(code) {
+  return () => {
+    const err = new Error(code)
+    err.code = code
+
+    throw err
+  }
 }
 
 async function setup(t, opts = {}) {
   const dir = await t.tmp()
   const file = path.join(dir, 'app.log')
 
-  const log = new FileLog(file, { maxSize: 10, rotateInterval: 60_000, ...opts })
+  const log = new FileLog(file, { maxSize: 40, ...opts })
 
   t.teardown(() => log.close())
 
   return { file, log }
 }
 
-test('file-logger - a failed rotation does not throw and logging carries on', async (t) => {
-  const { file, log } = await setup(t)
-  log.write({ body: 'fills past maxSize' })
+function line(i) {
+  return JSON.stringify(record(i)) + '\n'
+}
 
-  stub(t, 'renameSync', fail('EACCES')) // e.g. the folder became read-only
+// fixed-width records, so every line is the same number of bytes
+function record(i) {
+  return { i: String(i).padStart(4, '0'), pad: 'x'.repeat(20) }
+}
 
-  t.execution(() => log._gc(), 'rotation failure is swallowed')
-  t.not(log._fd, -1, 'still has a file to write to')
+// every line across the rotated files, oldest first
+function readAll(file) {
+  const all = []
+  for (let i = FileLog.LOG_FILES - 1; i >= 1; i--) all.push(...lines(`${file}.${i}`))
+  all.push(...lines(file))
+  return all
+}
 
-  log.write({ body: 'after the failure' })
-  t.ok(
-    fs.readFileSync(file, 'utf8').includes('after the failure'),
-    'kept appending to the same file'
-  )
-})
+function lines(file) {
+  return contents(file).split('\n').filter(Boolean)
+}
 
-test('file-logger - recovers once the file can be opened again', async (t) => {
-  const { file, log } = await setup(t)
-  log.write({ body: 'fills past maxSize' })
-
-  const openSync = stub(t, 'openSync', fail('EACCES'))
-  log._gc()
-  t.is(log._fd, -1, 'reopen failed, so there is no handle')
-  t.execution(() => log.write({ body: 'dropped' }), 'writing with no handle does not throw')
-
-  fs.openSync = openSync
-  log._gc()
-  t.not(log._fd, -1, 'next tick reopened the file')
-
-  log.write({ body: 'back again' })
-  t.ok(fs.readFileSync(file, 'utf8').includes('back again'), 'can append to the opened file')
-})
-
-test('file-logger - closing after a failure never reopens the file', async (t) => {
-  const { log } = await setup(t)
-  log.write({ body: 'fills past maxSize' })
-
-  const openSync = stub(t, 'openSync', fail('EACCES'))
-  log._gc()
-  t.is(log._fd, -1)
-
-  log.close()
-  t.is(log._interval, null, 'timer cleared even though there was no handle')
-
-  fs.openSync = openSync
-  log._gc()
-  t.is(log._fd, -1, 'a closed logger stays closed')
-  t.is(log._reopen(), false)
-})
-
-test('file-logger - never holds more than one handle', async (t) => {
-  const dir = await t.tmp()
-  const file = path.join(dir, 'app.log')
-
-  let open = 0
-  let most = 0
-  const openSync = stub(t, 'openSync', (...args) => {
-    const fd = openSync(...args)
-    most = Math.max(most, ++open)
-    return fd
-  })
-  const closeSync = stub(t, 'closeSync', (fd) => {
-    closeSync(fd)
-    open--
-  })
-
-  const log = new FileLog(file, { maxSize: 10, rotateInterval: 60_000 })
-
-  for (let i = 0; i < 25; i++) {
-    log.write({ body: 'fills past maxSize ' + i })
-    log._gc() // a successful rotation
-  }
-
-  fs.renameSync = fail('EACCES')
-  log.write({ body: 'fills past maxSize' })
-  log._gc() // a failed rotation
-  log._reopen() // calling it while a handle is open must not open another
-  log.clear()
-
-  t.is(open, 1, 'one handle while running')
-
-  log.close()
-  log.close()
-  log.clear()
-  log._gc()
-
-  t.is(open, 0, 'none after close')
-  t.is(most, 1, 'never more than one at any point')
-})
+function contents(file) {
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
+}
