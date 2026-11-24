@@ -4,6 +4,7 @@ const path = require('path')
 const FileLog = require('../lib/file-logger')
 
 const RETRY_INTERVAL = 1000 // REOPEN_RETRY_INTERVAL in lib/file-logger.js
+const ROTATE_RETRY_INTERVAL = 1000 // ROTATE_RETRY_INTERVAL in lib/file-logger.js
 
 // longer than setup's 40-byte maxSize on its own, so writing it rotates; short lines don't
 const BIG = { body: 'fills past maxSize'.padEnd(60, '.') }
@@ -289,6 +290,102 @@ test('file-logger - never holds more than one handle', async (t) => {
 
   t.is(open, 0, 'none after close')
   t.is(most, 1, 'never more than one at any point')
+})
+
+test('file-logger - rotation recovers after failures without losing any lines', async (t) => {
+  const { file, log } = await setup(t, { maxSize: 6 * line(0).length - 1 }) // 6 lines per file
+  const time = clock(t)
+  const pending = `${file}.rotating`
+
+  let next = 0
+  const write = (count) => {
+    for (let i = 0; i < count; i++) log.write(record(next++))
+  }
+  const expected = (count) => Array.from({ length: count }, (_, i) => line(i).trimEnd())
+
+  // standard rotation works normally
+  {
+    write(6)
+    t.alike(lines(`${file}.1`), expected(6))
+  }
+
+  // prevent live renaming
+  const renameSync = stubfs(t, 'renameSync', (from, to) => {
+    if (from === file) fail('EPERM')()
+    return renameSync(from, to)
+  })
+
+  // live takes all new lines
+  {
+    write(10)
+    t.alike(lines(`${file}.1`), expected(6), 'history is untouched')
+    t.is(lines(file).length, 10, 'the new lines stay in app.log')
+  }
+
+  // cannot rename rotation file
+  let failOnce = true
+  fs.renameSync = (from, to) => {
+    if (from === pending && failOnce) {
+      failOnce = false
+      fail('EPERM')()
+    }
+    return renameSync(from, to)
+  }
+
+  time.advance(ROTATE_RETRY_INTERVAL)
+
+  // rotation stops partway, live accepts new writes
+  {
+    write(1)
+    t.ok(fs.existsSync(pending), 'rotation stopped part-way, with the old live file in .rotating')
+    t.is(lines(`${file}.2`).length, 6, 'the .1 file has been moved to .2')
+
+    write(9)
+    t.alike(lines(pending).length, 11, 'pending still has 11 lines')
+    t.is(lines(file).length, 9, 'the newly appended lines remain in the live log')
+  }
+
+  // rotation works
+  fs.renameSync = renameSync
+  time.advance(ROTATE_RETRY_INTERVAL)
+
+  // log files move to fill gaps, no logs are lost
+  // logs remain in order
+  {
+    write(1)
+    t.ok(!fs.existsSync(pending), 'the pending file no longer exists')
+    t.is(lines(file).length, 0, 'the live file is empty after rotation')
+    t.is(lines(`${file}.1`).length, 10, 'live has been moved to .1')
+    t.is(lines(`${file}.2`).length, 11, 'pending has been moved to .2')
+    t.is(lines(`${file}.3`).length, 6, '.2 has been moved to .3')
+
+    t.alike(readAll(file), expected(next), 'every line is kept, in order')
+  }
+})
+
+test('file-logger - a failed rotation is retried at most once per interval', async (t) => {
+  const { log } = await setup(t, { maxSize: 6 * line(0).length - 1 }) // 6 lines per file
+  const time = clock(t)
+
+  let attempts = 0
+  stubfs(t, 'renameSync', () => {
+    attempts++
+    fail('EPERM')()
+  })
+
+  for (let i = 0; i < 6; i++) log.write(record(i)) // reaches the limit
+  t.is(attempts, 1, 'the first attempt happens straight away')
+
+  for (let i = 0; i < 20; i++) log.write(record(i))
+  t.is(attempts, 1, 'no further attempts within the interval')
+
+  time.advance(ROTATE_RETRY_INTERVAL - 1)
+  log.write(record(0))
+  t.is(attempts, 1, 'none just before the interval ends')
+
+  time.advance(1)
+  log.write(record(0))
+  t.is(attempts, 2, 'one more once the interval has passed')
 })
 
 // Swap an fs function for the length of one test
