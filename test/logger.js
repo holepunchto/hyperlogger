@@ -8,7 +8,7 @@ test('check all standard log types produce outputs', async (t) => {
   const file = path.join(dir, 'logs')
   const logger = new Hyperlogger({ level: 'DEBUG', file })
 
-  t.teardown(() => logger._file.close())
+  t.teardown(() => logger.close())
 
   const msg1 = 'hi'
   const msg2 = 'there'
@@ -44,7 +44,7 @@ test('logger serializes normalized attributes without mutating the input', async
   const dir = await t.tmp()
   const file = path.join(dir, 'logs')
   const logger = new Hyperlogger({ file })
-  t.teardown(() => logger._file.close())
+  t.teardown(() => logger.close())
   logger._system.info = () => {}
 
   const attrs = { count: 42n, date: new Date('2026-01-01T00:00:00Z') }
@@ -75,7 +75,7 @@ test('timing log output is JSON with timing in the log body', async (t) => {
   const file = path.join(dir, 'logs')
   const logger = new Hyperlogger({ file })
 
-  t.teardown(() => logger._file.close())
+  t.teardown(() => logger.close())
 
   const label = 'test'
 
@@ -116,7 +116,7 @@ test('logger passes maxBytes through to the attributes', async (t) => {
   const file = path.join(dir, 'logs')
   const logger = new Hyperlogger({ file, maxBytes: 50 })
 
-  t.teardown(() => logger._file.close())
+  t.teardown(() => logger.close())
 
   logger.info('x', Object.fromEntries(Array.from({ length: 100 }, (_, i) => ['k' + i, i])))
 
