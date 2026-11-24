@@ -301,11 +301,7 @@ test('normalise - string cut does not split a surrogate pair', (t) => {
   t.ok(!JSON.stringify(result).includes('\\ud83d'), 'no lone surrogate escape in the JSON')
 })
 
-// Byte budget. Expected values were worked out by hand from the cost rules before
-// the tests were first run: 2 per {} or [], key.length + 4 per key, length + 2 per
-// string, 8 per number, 1 per array element, checked before each field or element.
-
-test('normalise - budget chops the remaining fields of a large object', (t) => {
+test('normalise - budget chops off the remaining fields of a large object', (t) => {
   const input = Object.fromEntries(Array.from({ length: 500 }, (_, i) => ['k' + i, i]))
   const result = normaliseAttribute(input, normaliseAttribute.createOptions({ maxBytes: 100 }))
   const keys = Object.keys(result)
@@ -347,13 +343,44 @@ test('normalise - values under the budget are not chopped', (t) => {
   t.alike(result, input)
 })
 
-test('normalise - default budget keeps a huge object close to 256 KB', (t) => {
+test('normalise - a 256 KB budget keeps a huge object close to 256 KB', (t) => {
   const input = Object.fromEntries(Array.from({ length: 50_000 }, (_, i) => ['key' + i, 'val' + i]))
-  const result = normaliseAttribute(input)
+  const result = normaliseAttribute(input, normaliseAttribute.createOptions({ maxBytes: 262_144 }))
   const keys = Object.keys(result)
   const bytes = JSON.stringify(result).length
 
   t.is(keys.length, 12_926 + 1, 'kept fields plus the marker')
   t.is(result['...'], '37074 more keys')
   t.ok(Math.abs(bytes - 262_144) <= 50, `JSON is ${bytes} bytes, within 50 of the budget`)
+})
+
+test('normalise - options fall back to defaults when invalid', (t) => {
+  const { createOptions } = normaliseAttribute
+  t.alike(createOptions(), { maxDepth: 6, maxBytes: 65_536 })
+  for (const bad of [undefined, null, NaN, '10', -1, 0, 0.5, {}]) {
+    t.alike(
+      createOptions({ maxDepth: bad, maxBytes: bad }),
+      { maxDepth: 6, maxBytes: 65_536 },
+      String(bad)
+    )
+  }
+})
+
+test('normalise - options are clamped to their ceilings', (t) => {
+  const { createOptions } = normaliseAttribute
+  t.alike(createOptions({ maxDepth: 1000, maxBytes: 1e9 }), { maxDepth: 100, maxBytes: 2_097_152 })
+  t.alike(createOptions({ maxDepth: Infinity, maxBytes: Infinity }), {
+    maxDepth: 100,
+    maxBytes: 2_097_152
+  })
+  t.alike(createOptions({ maxDepth: 3.7, maxBytes: 1000.9 }), { maxDepth: 3, maxBytes: 1000 })
+})
+
+test('normalise - an unlimited depth request stops at 100 levels', (t) => {
+  let deep = { leaf: true }
+  for (let i = 0; i < 150; i++) deep = { child: deep }
+  const result = normaliseAttribute(deep, normaliseAttribute.createOptions({ maxDepth: Infinity }))
+  let node = result
+  for (let i = 0; i < 99; i++) node = node.child
+  t.is(node.child, '[MaxDepth]')
 })
