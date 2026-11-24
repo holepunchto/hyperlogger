@@ -110,3 +110,16 @@ test('timing log output is JSON with timing in the log body', async (t) => {
     'timeEnd body contains only the label and formatted duration'
   )
 })
+
+test('logger passes maxBytes through to the attributes', async (t) => {
+  const dir = await t.tmp()
+  const file = path.join(dir, 'logs')
+  const logger = new Hyperlogger({ file, maxBytes: 50 })
+
+  t.teardown(() => logger._file.close())
+
+  logger.info('x', Object.fromEntries(Array.from({ length: 100 }, (_, i) => ['k' + i, i])))
+
+  const [log] = Hyperlogger.parseLogs(fs.readFileSync(file, { encoding: 'utf8' }))
+  t.alike(log.attributes, { k0: 0, k1: 1, k2: 2, k3: 3, '...': '96 more keys' })
+})

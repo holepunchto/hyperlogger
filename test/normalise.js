@@ -356,11 +356,11 @@ test('normalise - a 256 KB budget keeps a huge object close to 256 KB', (t) => {
 
 test('normalise - options fall back to defaults when invalid', (t) => {
   const { createOptions } = normaliseAttribute
-  t.alike(createOptions(), { maxDepth: 6, maxBytes: 65_536 })
+  t.alike(createOptions(), { maxDepth: 6, maxBytes: 262_144 })
   for (const bad of [undefined, null, NaN, '10', -1, 0, 0.5, {}]) {
     t.alike(
       createOptions({ maxDepth: bad, maxBytes: bad }),
-      { maxDepth: 6, maxBytes: 65_536 },
+      { maxDepth: 6, maxBytes: 262_144 },
       String(bad)
     )
   }
@@ -383,4 +383,69 @@ test('normalise - an unlimited depth request stops at 100 levels', (t) => {
   let node = result
   for (let i = 0; i < 99; i++) node = node.child
   t.is(node.child, '[MaxDepth]')
+})
+
+test('normalise - huge empty sparse array is capped, not expanded', (t) => {
+  const input = []
+  input.length = 1e9
+  const result = normaliseAttribute(input)
+
+  t.is(result.length, 101)
+  t.alike(result.slice(0, 100), Array(100).fill('[Undefined]'))
+  t.is(result[100], '... 999999900 more items')
+})
+
+test('normalise - huge sparse array keeps the values it has', (t) => {
+  const input = []
+  input.length = 1e9
+  input[0] = 1
+  input[5] = 'x'
+  const result = normaliseAttribute(input)
+
+  const expected = Array(100).fill('[Undefined]')
+  expected[0] = 1
+  expected[5] = 'x'
+  expected.push('... 999999900 more items')
+  t.alike(result, expected)
+})
+
+test('normalise - set preview is counted once, as its final string', (t) => {
+  const input = { s: new Set(['aa', 'bb', 'cc']), z: 1 }
+  const preview = "Set(3) { 'aa', 'bb', 'cc' }"
+  const { createOptions } = normaliseAttribute
+
+  t.alike(normaliseAttribute(input, createOptions({ maxBytes: 36 })), {
+    s: preview,
+    '...': '1 more keys'
+  })
+  t.alike(normaliseAttribute(input, createOptions({ maxBytes: 37 })), { s: preview, z: 1 })
+})
+
+test('normalise - map preview is counted once, as its final string', (t) => {
+  const input = {
+    m: new Map([
+      ['a', 1],
+      ['b', 2]
+    ]),
+    after: 'still here?'
+  }
+  const preview = "Map(2) { 'a' => 1, 'b' => 2 }"
+  const { createOptions } = normaliseAttribute
+
+  t.alike(normaliseAttribute(input, createOptions({ maxBytes: 38 })), {
+    m: preview,
+    '...': '1 more keys'
+  })
+  t.alike(normaliseAttribute(input, createOptions({ maxBytes: 39 })), {
+    m: preview,
+    after: 'still here?'
+  })
+})
+
+test('normalise - budget stops a map preview early', (t) => {
+  const v = 'v'.repeat(50)
+  const input = new Map(Array.from({ length: 10 }, (_, i) => [i, v]))
+  const result = normaliseAttribute(input, normaliseAttribute.createOptions({ maxBytes: 120 }))
+
+  t.is(result, `Map(10) { 0 => '${v}', 1 => '${v}', ... 8 more items }`)
 })
