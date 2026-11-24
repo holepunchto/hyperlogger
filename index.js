@@ -1,7 +1,9 @@
 const path = require('path')
+const fs = require('fs')
 const FileLog = require('./lib/file-logger')
 const SystemLog = require('#system-logger')
 const hrtime = require('#hrtime')
+const format = require('#format')
 const normaliseAttributes = require('./lib/normalise.js')
 const { createOptions } = normaliseAttributes
 
@@ -66,6 +68,27 @@ class Hyperlogger {
   }
 
   static LEVELS = LEVELS
+
+  // logs in write order
+  static readLogs(path) {
+    const last = FileLog.LOG_FILES - 1
+    const logs = []
+
+    for (let i = last; i >= 0; i--) {
+      try {
+        let raw
+
+        if (i === 0) raw = fs.readFileSync(path, { encoding: 'utf8' })
+        else raw = fs.readFileSync(`${path}.${i}`, { encoding: 'utf8' })
+
+        logs.push(...Hyperlogger.parseLogs(raw))
+      } catch (err) {
+        if (err.code !== 'ENOENT') throw err
+      }
+    }
+
+    return logs
+  }
 
   static parseLogs(rawLogs) {
     const logLines = rawLogs.split('\n')
@@ -156,7 +179,7 @@ class Hyperlogger {
       attributes = normaliseAttributes(args.pop(), this._normaliseOpts)
     }
 
-    const body = args.join(' ')
+    const body = args.map((arg) => format(arg)).join(' ')
 
     const log = this._buildRecord(level, body, attributes)
     const method = level.toLowerCase()

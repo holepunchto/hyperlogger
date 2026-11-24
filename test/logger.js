@@ -130,8 +130,7 @@ test('loggers sharing a path never rotate the file out from under each other', a
   const LOGGERS = 10
   const ROUNDS = 7
 
-  // Every record has the same shape and fixed-width values, so every line is exactly
-  // `size` bytes. Timestamps are 19 digits (nanoseconds) until the year 2286.
+  // Records are identical, so every line is `size` bytes
   const body = (logger, n) =>
     `logger ${String(logger).padStart(2, '0')} line ${String(n).padStart(4, '0')}`
   const attributes = (n) => ({ n: String(n).padStart(4, '0') })
@@ -206,6 +205,20 @@ test('loggers sharing a path never rotate the file out from under each other', a
     }
   }
   t.alike([...lengths], [size], 'every line in every file is the expected fixed length')
+})
+
+test('logger formats errors to show message and code', async (t) => {
+  const dir = await t.tmp()
+  const file = path.join(dir, 'logs')
+  const logger = new Hyperlogger({ file, maxBytes: 50 })
+
+  t.teardown(() => logger.close())
+
+  logger.error('failed', new Error('boom'))
+
+  const [log] = Hyperlogger.readLogs(file)
+  t.ok(log.body.includes('failed Error: boom'), 'contains standard error message')
+  t.ok(log.body.includes('at async Test._run'), 'stack trace references the brittle index')
 })
 
 // read all logs in write order
