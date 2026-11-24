@@ -12,7 +12,7 @@ class Hyperlogger {
     verbose = false,
     file,
     level = 'INFO',
-    maxSize,
+    maxTotalSize,
     maxDepth,
     maxBytes
   } = {}) {
@@ -21,9 +21,12 @@ class Hyperlogger {
     this.verbose = verbose
     this.level = this._checkLevel(level)
     this._system = new SystemLog()
-    this._file = file ? new FileLog(file, { maxSize: maxSize || 100_000_000 }) : null
     this._timers = new Map()
     this._normaliseOpts = createOptions({ maxDepth, maxBytes })
+
+    // logs are split across N files sharing total size (100MB default)
+    const maxFileSize = maxTotalSize ? Math.floor(maxTotalSize / FileLog.LOG_FILES) : undefined
+    this._file = file ? new FileLog(file, { maxSize: maxFileSize }) : null
   }
 
   static LEVELS = LEVELS
