@@ -197,7 +197,7 @@ test('file-logger - a closed logger never reopens, even after a failure', async 
 
   time.advance(RETRY_INTERVAL)
   log.write({ body: 'after close' })
-  log._gc()
+  log._rotateIfNeeded()
 
   t.is(log._fd, -1, 'a closed logger stays closed')
   t.is(log._reopen(), false)
@@ -285,7 +285,7 @@ test('file-logger - never holds more than one handle', async (t) => {
   log.close()
   log.close()
   log.clear()
-  log._gc()
+  log._rotateIfNeeded()
   log.write({ body: 'after close' })
 
   t.is(open, 0, 'none after close')
