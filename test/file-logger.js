@@ -195,12 +195,14 @@ test('file-logger - a closed logger never reopens, even after a failure', async 
     return openSync(...args)
   }
 
+  // everything that could reopen the file: writing past the retry interval, and clear
   time.advance(RETRY_INTERVAL)
   log.write({ body: 'after close' })
-  log._rotateIfNeeded()
+  log.clear()
+  time.advance(RETRY_INTERVAL)
+  log.write(BIG)
 
   t.is(log._fd, -1, 'a closed logger stays closed')
-  t.is(log._reopen(), false)
   t.is(opens, 0, 'nothing tried to open the file')
 })
 
@@ -277,7 +279,7 @@ test('file-logger - never holds more than one handle', async (t) => {
 
   stubfs(t, 'renameSync', fail('EACCES'))
   log.write({ body: 'fills past maxSize' }) // a failed rotation
-  log._reopen() // calling it while a handle is open must not open another
+  log.write({ body: 'fills past maxSize' }) // over the limit again while the handle is open
   log.clear()
 
   t.is(open, 1, 'one handle while running')
@@ -285,7 +287,6 @@ test('file-logger - never holds more than one handle', async (t) => {
   log.close()
   log.close()
   log.clear()
-  log._rotateIfNeeded()
   log.write({ body: 'after close' })
 
   t.is(open, 0, 'none after close')

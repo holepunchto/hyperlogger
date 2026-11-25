@@ -45,7 +45,6 @@ test('logger serializes normalized attributes without mutating the input', async
   const file = path.join(dir, 'logs')
   const logger = new Hyperlogger({ file })
   t.teardown(() => logger.close())
-  logger._system.info = () => {}
 
   const attrs = { count: 42n, date: new Date('2026-01-01T00:00:00Z') }
   attrs.self = attrs
