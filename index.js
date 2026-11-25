@@ -4,7 +4,7 @@ const FileLog = require('./lib/file-logger')
 const SystemLog = require('#system-logger')
 const hrtime = require('#hrtime')
 const format = require('#format')
-const normaliseAttributes = require('./lib/normalise.js')
+const normaliseAttributes = require('./lib/normalise')
 const { createOptions } = normaliseAttributes
 
 const LEVELS = { DEBUG: 5, INFO: 9, WARN: 13, ERROR: 17 }
@@ -53,7 +53,7 @@ class Hyperlogger {
     this._muted = false
     this._dev = dev
     this._verbose = verbose
-    this._level = this._checkLevel(level)
+    this._level = checkLevel(level)
     this._system = new SystemLog()
     this._timers = new Map()
     this._normaliseOpts = createOptions({ maxDepth, maxBytes })
@@ -70,7 +70,7 @@ class Hyperlogger {
   static LEVELS = LEVELS
 
   // logs in write order
-  static readLogs(path) {
+  static readLogs(filePath) {
     const last = FileLog.LOG_FILES - 1
     const logs = []
 
@@ -78,8 +78,8 @@ class Hyperlogger {
       try {
         let raw
 
-        if (i === 0) raw = fs.readFileSync(path, { encoding: 'utf8' })
-        else raw = fs.readFileSync(`${path}.${i}`, { encoding: 'utf8' })
+        if (i === 0) raw = fs.readFileSync(filePath, { encoding: 'utf8' })
+        else raw = fs.readFileSync(`${filePath}.${i}`, { encoding: 'utf8' })
 
         logs.push(...Hyperlogger.parseLogs(raw))
       } catch (err) {
@@ -108,16 +108,12 @@ class Hyperlogger {
 
     this._closed = true
 
+    this._timers.clear()
+
     const key = this._fileKey
     this._file = null
     this._fileKey = null
     if (key !== null) release(key)
-  }
-
-  _checkLevel(level) {
-    if (!Object.hasOwn(LEVELS, level)) throw new RangeError(`Invalide log level: ${level}`)
-
-    return LEVELS[level]
   }
 
   mute() {
@@ -190,13 +186,13 @@ class Hyperlogger {
       log(...args)
     }
 
-    this._system[method](...args)
+    this._system[method](body)
 
     if (this._file) this._file.write(log)
   }
 
   _buildRecord(level, body, attributes) {
-    const timeUnixNano = (BigInt(Date.now()) * 1_000_000n).toString()
+    const timeUnixNano = Date.now() + '000000'
 
     return {
       timeUnixNano,
@@ -214,6 +210,12 @@ module.exports = Hyperlogger
 function formatElapsed(ns) {
   const ms = Number(ns) / 1e6
   return ms > 1000 ? `${(ms / 1000).toFixed(3)}s` : `${ms.toFixed(3)}ms`
+}
+
+function checkLevel(level) {
+  if (!Object.hasOwn(LEVELS, level)) throw new RangeError(`Invalid log level: ${level}`)
+
+  return LEVELS[level]
 }
 
 function isPlainObject(value) {

@@ -1,7 +1,7 @@
 const test = require('brittle')
 const fs = require('fs')
 const path = require('path')
-const Hyperlogger = require('../index.js')
+const Hyperlogger = require('../index')
 
 test('check all standard log types produce outputs', async (t) => {
   const dir = await t.tmp()

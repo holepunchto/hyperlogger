@@ -5,8 +5,12 @@
   "main": "index.js",
   "files": [
     "index.js",
-    "lib/**.js"
+    "lib/**/*.js"
   ],
+  "exports": {
+    "./package": "./package.json",
+    ".": "./index.js"
+  },
   "scripts": {
     "format": "prettier --write .",
     "lint": "prettier --check . && lunte",
@@ -54,7 +58,7 @@
     "type": "git",
     "url": "https://github.com/holepunchto/hyperlogger"
   },
-  "author": "Holepunch",
+  "author": "Holepunch Inc",
   "license": "Apache-2.0",
   "bugs": {
     "url": "https://github.com/holepunchto/hyperlogger/issues"
