@@ -21,10 +21,6 @@ function acquire(filePath, maxSize) {
     // created before it's stored, so a constructor error leaves no broken entry
     entry = { file: new FileLog(key, { maxSize }), users: 0, maxSize }
     files.set(key, entry)
-  } else if (maxSize !== entry.maxSize) {
-    console.warn(
-      `hyperlogger: ${key} is already open with maxSize ${entry.file._maxSize}, ignoring ${maxSize}`
-    )
   }
 
   entry.users++
@@ -95,9 +91,9 @@ class Hyperlogger {
 
     const logs = []
     for (const log of logLines) {
-      // ignore final newline
-      if (log === '') continue
-      logs.push(JSON.parse(log))
+      try {
+        logs.push(JSON.parse(log))
+      } catch {}
     }
 
     return logs
