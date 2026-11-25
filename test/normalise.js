@@ -449,3 +449,51 @@ test('normalise - budget stops a map preview early', (t) => {
 
   t.is(result, `Map(10) { 0 => '${v}', 1 => '${v}', ... 8 more items }`)
 })
+
+test('normalise - object keys longer than 1000 characters are cut with a marker', (t) => {
+  const huge = 'k'.repeat(5 * 1024 * 1024) // 5 MiB
+  const result = normaliseAttribute({ [huge]: 1, after: 2 })
+
+  t.alike(result, { ['k'.repeat(1000) + '... 5241880 more characters']: 1, after: 2 })
+  t.ok(JSON.stringify(result).length < 2000, 'the record stays small')
+})
+
+test('normalise - a key exactly at the limit is kept whole', (t) => {
+  const atLimit = 'k'.repeat(1000)
+  const overLimit = 'k'.repeat(1001)
+
+  t.alike(Object.keys(normaliseAttribute({ [atLimit]: 1 })), [atLimit])
+  t.alike(Object.keys(normaliseAttribute({ [overLimit]: 1 })), [atLimit + '... 1 more characters'])
+})
+
+test('normalise - keys that are identical once cut keep the first value', (t) => {
+  const prefix = 'a'.repeat(1000)
+
+  // same length after the prefix: both cut to the same key
+  const clash = normaliseAttribute({
+    [prefix + 'x'.repeat(500)]: 'first',
+    [prefix + 'y'.repeat(500)]: 'second'
+  })
+  t.alike(clash, { [prefix + '... 500 more characters']: 'first' })
+
+  // different lengths: the markers differ, so both are kept
+  const distinct = normaliseAttribute({
+    [prefix + 'x'.repeat(500)]: 'first',
+    [prefix + 'y'.repeat(600)]: 'second'
+  })
+  t.alike(distinct, {
+    [prefix + '... 500 more characters']: 'first',
+    [prefix + '... 600 more characters']: 'second'
+  })
+})
+
+test('normalise - a huge key can only overshoot the budget by one capped key', (t) => {
+  const huge = 'k'.repeat(5 * 1024 * 1024)
+  const result = normaliseAttribute(
+    { [huge]: 1, after: 2 },
+    normaliseAttribute.createOptions({ maxBytes: 500 })
+  )
+
+  t.alike(result, { ['k'.repeat(1000) + '... 5241880 more characters']: 1, '...': '1 more keys' })
+  t.ok(JSON.stringify(result).length < 500 + 1100, 'over by at most about one capped key')
+})
