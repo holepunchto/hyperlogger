@@ -2,6 +2,17 @@ const test = require('brittle')
 const fs = require('fs')
 const path = require('path')
 const FileLog = require('../lib/file-logger')
+const {
+  stubfs,
+  dateClock,
+  fail,
+  setup,
+  line,
+  record,
+  readAll,
+  lines,
+  contents
+} = require('./helper')
 
 const RETRY_INTERVAL = 1000 // REOPEN_RETRY_INTERVAL in lib/file-logger.js
 const ROTATE_RETRY_INTERVAL = 1000 // ROTATE_RETRY_INTERVAL in lib/file-logger.js
@@ -121,7 +132,7 @@ test('file-logger - a failed rotation does not throw and logging carries on', as
 
 test('file-logger - writes reopen the file once it can be opened again', async (t) => {
   const { file, log } = await setup(t)
-  const time = clock(t)
+  const time = dateClock(t)
 
   const openSync = stubfs(t, 'openSync', fail('EACCES'))
 
@@ -146,7 +157,7 @@ test('file-logger - writes reopen the file once it can be opened again', async (
 
 test('file-logger - reopen attempts are limited to one per retry interval', async (t) => {
   const { log } = await setup(t)
-  const time = clock(t)
+  const time = dateClock(t)
 
   let attempts = 0
   stubfs(t, 'openSync', () => {
@@ -174,7 +185,7 @@ test('file-logger - reopen attempts are limited to one per retry interval', asyn
 
 test('file-logger - a closed logger never reopens, even after a failure', async (t) => {
   const { log } = await setup(t)
-  const time = clock(t)
+  const time = dateClock(t)
 
   const openSync = stubfs(t, 'openSync', fail('EACCES'))
   log.write(BIG)
@@ -200,7 +211,7 @@ test('file-logger - a closed logger never reopens, even after a failure', async 
 
 test('file-logger - writing after close does nothing', async (t) => {
   const { file, log } = await setup(t, { maxSize: 1000 })
-  const time = clock(t)
+  const time = dateClock(t)
 
   log.write({ body: 'before close' })
   const contents = fs.readFileSync(file, 'utf8')
@@ -285,7 +296,7 @@ test('file-logger - never holds more than one handle', async (t) => {
 
 test('file-logger - rotation recovers after failures without losing any lines', async (t) => {
   const { file, log } = await setup(t, { maxSize: 6 * line(0).length - 1 }) // 6 lines per file
-  const time = clock(t)
+  const time = dateClock(t)
   const pending = `${file}.rotating`
 
   let next = 0
@@ -356,7 +367,7 @@ test('file-logger - rotation recovers after failures without losing any lines', 
 
 test('file-logger - a failed rotation is retried at most once per interval', async (t) => {
   const { log } = await setup(t, { maxSize: 6 * line(0).length - 1 }) // 6 lines per file
-  const time = clock(t)
+  const time = dateClock(t)
 
   let attempts = 0
   stubfs(t, 'renameSync', () => {
@@ -378,79 +389,3 @@ test('file-logger - a failed rotation is retried at most once per interval', asy
   log.write(record(0))
   t.is(attempts, 2, 'one more once the interval has passed')
 })
-
-// Swap an fs function for the length of one test
-function stubfs(t, name, fn) {
-  const original = fs[name]
-
-  fs[name] = fn
-
-  t.teardown(() => {
-    fs[name] = original
-  })
-
-  return original
-}
-
-// Control Date.now for the length of one test
-function clock(t) {
-  const now = Date.now
-  let time = now()
-
-  Date.now = () => time
-
-  t.teardown(() => {
-    Date.now = now
-  })
-
-  return {
-    advance(ms) {
-      time += ms
-    }
-  }
-}
-
-function fail(code) {
-  return () => {
-    const err = new Error(code)
-    err.code = code
-
-    throw err
-  }
-}
-
-async function setup(t, opts = {}) {
-  const dir = await t.tmp()
-  const file = path.join(dir, 'app.log')
-
-  const log = new FileLog(file, { maxSize: 40, ...opts })
-
-  t.teardown(() => log.close())
-
-  return { file, log }
-}
-
-function line(i) {
-  return JSON.stringify(record(i)) + '\n'
-}
-
-// fixed-width records, so every line is the same number of bytes
-function record(i) {
-  return { i: String(i).padStart(4, '0'), pad: 'x'.repeat(20) }
-}
-
-// every line across the rotated files, oldest first
-function readAll(file) {
-  const all = []
-  for (let i = FileLog.LOG_FILES - 1; i >= 1; i--) all.push(...lines(`${file}.${i}`))
-  all.push(...lines(file))
-  return all
-}
-
-function lines(file) {
-  return contents(file).split('\n').filter(Boolean)
-}
-
-function contents(file) {
-  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : ''
-}

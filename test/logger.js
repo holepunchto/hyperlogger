@@ -1,8 +1,16 @@
 const test = require('brittle')
-const hrtime = require('#hrtime')
 const fs = require('fs')
 const path = require('path')
 const Hyperlogger = require('../index')
+const {
+  createLogger,
+  captureConsole,
+  hrtimeClock,
+  severities,
+  durationMs,
+  bodies,
+  readLines
+} = require('./helper')
 
 test('check all standard log types produce outputs', async (t) => {
   const dir = await t.tmp()
@@ -294,7 +302,7 @@ test('timing an unknown label writes nothing', async (t) => {
 test('time with an existing label restarts it', async (t) => {
   const { file, logger } = await createLogger(t)
 
-  const { advance } = clock(t)
+  const { advance } = hrtimeClock(t)
 
   logger.time('task')
   advance(50)
@@ -307,7 +315,7 @@ test('time with an existing label restarts it', async (t) => {
 
 test('timeLog keeps the timer running', async (t) => {
   const { file, logger } = await createLogger(t)
-  const { advance } = clock(t)
+  const { advance } = hrtimeClock(t)
 
   logger.time('task')
   advance(5)
@@ -348,7 +356,7 @@ test('timing lines follow level and mute', async (t) => {
 
 test('durations over a second are shown in seconds', async (t) => {
   const { file, logger } = await createLogger(t)
-  const { advance } = clock(t)
+  const { advance } = hrtimeClock(t)
 
   logger.time('task')
   advance(999)
@@ -470,69 +478,3 @@ test('a missing log folder throws, and works once the folder exists', async (t) 
   logger.info('now it works')
   t.alike(bodies(file), ['now it works'], 'the failed attempt left nothing behind')
 })
-
-async function createLogger(t, opts = {}) {
-  // loggers have separate directories
-  const dir = await t.tmp()
-  const file = path.join(dir, 'app.log')
-  const logger = new Hyperlogger({ file, ...opts })
-
-  t.teardown(() => logger.close())
-
-  return { file, logger }
-}
-
-function captureConsole(fn) {
-  const methods = ['debug', 'info', 'warn', 'error', 'log']
-  const original = {}
-  const calls = []
-
-  for (const m of methods) {
-    original[m] = console[m]
-    console[m] = (...args) => calls.push([m, ...args])
-  }
-
-  try {
-    fn()
-  } finally {
-    for (const m of methods) console[m] = original[m]
-  }
-
-  return calls
-}
-
-function clock(t) {
-  const bigint = hrtime.bigint
-  let time = bigint()
-
-  hrtime.bigint = () => time
-
-  t.teardown(() => {
-    hrtime.bigint = bigint
-  })
-
-  return {
-    advance(ms) {
-      time += BigInt(ms * 1_000_000)
-    }
-  }
-}
-
-function severities(file) {
-  return readLines(file).map((record) => record.severityText)
-}
-
-// the duration in a timing body ("label: 12.345ms ..." or "label: 1.234s ..."), in ms
-function durationMs(body) {
-  const [, value, unit] = body.match(/: (\d+\.\d{3})(ms|s)/)
-  return Number(value) * (unit === 's' ? 1000 : 1)
-}
-
-function bodies(file) {
-  return readLines(file).map((record) => record.body)
-}
-
-function readLines(file) {
-  if (!fs.existsSync(file)) return []
-  return Hyperlogger.parseLogs(fs.readFileSync(file, 'utf8'))
-}
