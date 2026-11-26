@@ -1,4 +1,3 @@
-const path = require('path')
 const fs = require('fs')
 const FileLog = require('./lib/file-logger')
 const SystemLog = require('#system-logger')
@@ -8,33 +7,6 @@ const normaliseAttributes = require('./lib/normalise')
 const { createOptions } = normaliseAttributes
 
 const LEVELS = { DEBUG: 5, INFO: 9, WARN: 13, ERROR: 17 }
-
-// one FileLog per file, shared by every logger writing to it,
-// prevents two loggers on the same path rotating files under one another
-const files = new Map()
-
-function acquire(filePath, maxSize) {
-  const key = path.resolve(filePath)
-  let entry = files.get(key)
-
-  if (entry === undefined) {
-    // created before it's stored, so a constructor error leaves no broken entry
-    entry = { file: new FileLog(key, { maxSize }), users: 0, maxSize }
-    files.set(key, entry)
-  }
-
-  entry.users++
-
-  return { key, file: entry.file }
-}
-
-function release(key) {
-  const entry = files.get(key)
-  if (entry === undefined || --entry.users > 0) return
-
-  files.delete(key)
-  entry.file.close()
-}
 
 class Hyperlogger {
   constructor({
@@ -58,9 +30,7 @@ class Hyperlogger {
     // logs are split across N files sharing total size (100MB default)
     const maxFileSize = maxTotalSize ? Math.ceil(maxTotalSize / FileLog.LOG_FILES) : undefined
 
-    this._file = null
-    this._fileKey = null
-    if (file) ({ key: this._fileKey, file: this._file } = acquire(file, maxFileSize))
+    if (file) this._file = new FileLog(file, { maxSize: maxFileSize })
   }
 
   static LEVELS = LEVELS
@@ -105,11 +75,10 @@ class Hyperlogger {
     this._closed = true
 
     this._timers.clear()
-
-    const key = this._fileKey
-    this._file = null
-    this._fileKey = null
-    if (key !== null) release(key)
+    if (this._file) {
+      this._file.close()
+      this._file = null
+    }
   }
 
   mute() {

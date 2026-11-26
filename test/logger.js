@@ -124,89 +124,6 @@ test('logger passes maxBytes through to the attributes', async (t) => {
   t.alike(log.attributes, { k0: 0, k1: 1, k2: 2, k3: 3, '...': '96 more keys' })
 })
 
-test('loggers sharing a path never rotate the file out from under each other', async (t) => {
-  const dir = await t.tmp()
-  const file = path.join(dir, 'app.log')
-  const LOGGERS = 10
-  const ROUNDS = 7
-
-  // Records are identical, so every line is `size` bytes
-  const body = (logger, n) =>
-    `logger ${String(logger).padStart(2, '0')} line ${String(n).padStart(4, '0')}`
-  const attributes = (n) => ({ n: String(n).padStart(4, '0') })
-  const exampleRecord = {
-    timeUnixNano: '0'.repeat(19),
-    observedTimeUnixNano: '0'.repeat(19),
-    severityNumber: Hyperlogger.LEVELS.INFO,
-    severityText: 'INFO',
-    body: body(0, 0),
-    attributes: attributes(0)
-  }
-  const size = JSON.stringify(exampleRecord).length + 1
-
-  // a file rotates once it goes over maxSize.
-  // so 6 * size - 1 holds exactly 6 lines;
-  const perFile = 6
-  const maxTotalSize = 10 * (perFile * size - 1)
-
-  const loggers = []
-  for (let i = 0; i < LOGGERS; i++) {
-    const logger = new Hyperlogger({ file, maxTotalSize })
-    t.teardown(() => logger.close())
-    loggers.push(logger)
-  }
-
-  t.is(new Set(loggers.map((l) => l._file)).size, 1, 'all loggers share one writer')
-
-  // loggers take turns writing lines
-  for (let r = 0; r < ROUNDS; r++) {
-    for (let i = 0; i < LOGGERS; i++) {
-      const n = r * LOGGERS + i
-      loggers[i].info(body(i, n), attributes(n))
-    }
-  }
-
-  // 70 lines written in total, causing 11 rotations at 6 per file:
-  // lines 0 to 11 are deleted, and there are 4 lines in the live file
-  const total = LOGGERS * ROUNDS
-  const rotations = Math.floor(total / perFile)
-  const live = total % perFile
-  const firstKept = (rotations - 9) * perFile
-
-  const expectedNames = ['app.log', ...Array.from({ length: 9 }, (_, i) => `app.log.${i + 1}`)]
-  t.alike(
-    fs.readdirSync(dir).toSorted(),
-    expectedNames.toSorted(),
-    'the live file plus 9 older ones'
-  )
-
-  for (let i = 1; i <= 9; i++) {
-    t.is(readLines(`${file}.${i}`).length, perFile, `app.log.${i} holds ${perFile} lines`)
-  }
-  t.is(readLines(file).length, live, `app.log holds the last ${live} lines`)
-
-  const all = readAll(file)
-
-  const expected = []
-  for (let n = firstKept; n < total; n++) {
-    expected.push({ body: body(n % LOGGERS, n), attributes: attributes(n) })
-  }
-
-  t.alike(
-    all.map(({ body, attributes }) => ({ body, attributes })),
-    expected,
-    `lines ${firstKept} to ${total - 1}, in order, each from the logger that wrote it`
-  )
-
-  const lengths = new Set()
-  for (const name of fs.readdirSync(dir)) {
-    for (const line of fs.readFileSync(path.join(dir, name), 'utf8').split('\n').filter(Boolean)) {
-      lengths.add(line.length + 1)
-    }
-  }
-  t.alike([...lengths], [size], 'every line in every file is the expected fixed length')
-})
-
 test('logger formats errors to show message and code', async (t) => {
   const dir = await t.tmp()
   const file = path.join(dir, 'logs')
@@ -613,15 +530,6 @@ function durationMs(body) {
 
 function bodies(file) {
   return readLines(file).map((record) => record.body)
-}
-
-// read all logs in write order
-function readAll(file) {
-  const all = []
-  for (let i = 9; i >= 1; i--) all.push(...readLines(`${file}.${i}`))
-  all.push(...readLines(file))
-
-  return all
 }
 
 function readLines(file) {
