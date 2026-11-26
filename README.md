@@ -42,12 +42,12 @@ Create a logger. Options include:
   maxTotalSize: 104_857_600, // bytes across the log file and its rotated copies
   maxDepth: 6, // how deeply attributes are normalised (at most 100)
   maxBytes: 262_144, // approximate size budget for one record's attributes (at most 2 MiB)
-  dev: false, // also print messages to the console when level is DEBUG
+  dev: false, // also print each logged message to the console
   verbose: false // enable verboseDebug and verboseInfo
 }
 ```
 
-`level` must be one of the names above, in capitals; anything else throws a `RangeError`.
+`level` must be one of the names above, in capitals; anything else throws a `RangeError`. `maxTotalSize`, if given, must be a number greater than 10; anything else also throws a `RangeError`.
 
 Without `file`, no file is written. In Node.js, without development console output or a log file, logging produces no output.
 
@@ -63,7 +63,7 @@ The folder for `file` must already exist; the logger creates the file but not it
 
 Log a message at the corresponding severity. Messages below `level` are ignored.
 
-Each argument is formatted the way `console.log` would show it on its own, using `util.format` in Node.js and `bare-format` in Bare, and the results are joined with spaces to form the message. Strings are used as they are, objects are shown as an inspected preview, and errors include their stack trace. Placeholders such as `%s` and `%d` are not substituted.
+Each argument is formatted the way `console.log` would show it on its own, and the results are joined with spaces to form the message. Strings are used as they are, objects are shown as an inspected preview, and errors include their stack trace. Placeholders such as `%s` and `%d` are not substituted.
 
 A final plain object is treated as structured attributes and stored separately in the file output. Attributes are not sent to the system logger.
 
@@ -118,9 +118,7 @@ Disable or restore all logging output.
 
 #### `logger.close()`
 
-Stop logging. Later calls on this logger are ignored. Calling `close` more than once is safe.
-
-Loggers in the same process that use the same `file` share one open file, which is closed when the last of them closes.
+Stop logging and close the file. Later calls on this logger are ignored. Calling `close` more than once is safe. Once a logger is closed, a new logger can use the same `file`.
 
 #### `const stream = Hyperlogger.readLogs(file)`
 
@@ -134,18 +132,20 @@ for await (const record of Hyperlogger.readLogs('./app.log')) {
 
 The files are read as they were when reading started: records written while the stream is being read, including any rotation they cause, are not included.
 
-If any of the files exists but can't be read, the stream fails with that error, so a `for await` loop throws it. All the files are opened before the first record is read, so a file that can't be opened fails the read before any records are returned. An error while reading a file can happen after some records have already been returned.
+If any of the files exists but can't be read, the stream fails with that error, so a `for await` loop throws it. A file that can't be opened fails the read before any records are returned; an error while reading a file can come after some records have already been returned.
 
 Breaking out of the loop early closes the stream and its files. A stream that has started reading keeps all its files open until it is read to the end, broken out of, or destroyed, so always do one of those. To collect everything into an array, use `await Array.fromAsync(Hyperlogger.readLogs('./app.log'))`.
 
-**Memory.** Records are read one line at a time, in 64 KiB pieces, so memory use stays small however large the logs are, as long as lines are. Each record's attributes are limited to roughly `maxBytes` (256 KiB by default), so lines are normally around that size or smaller. Message bodies are not limited, though: a very long message makes an equally long line, and that line is held in memory whole while it's read. The stream also reads a few records ahead (about 16), which are held in memory until they're used.
+**Memory.** Records are read one line at a time, so memory use stays small however large the logs are, as long as individual lines are. Each record's attributes are limited to roughly `maxBytes` (256 KiB by default), so lines are normally around that size or smaller. Message bodies are not limited, though: a very long message makes an equally long line, which is held in memory while it's read.
 
 #### `const logs = Hyperlogger.parseLogs(rawLogs)`
 
-Parse a newline-delimited JSON log string into an array of records. Only JSON objects are returned: empty lines, lines that aren't valid JSON, and JSON that isn't an object are skipped, the same as `readLogs`.
+Parse log text you already have, such as lines received from elsewhere, into an array of records. Only JSON objects are returned: empty lines, lines that aren't valid JSON, and JSON that isn't an object are skipped, the same as `readLogs`.
+
+To read log files, use `readLogs` instead: it streams them rather than loading them into memory.
 
 ```js
-const logs = Hyperlogger.parseLogs(fs.readFileSync('./app.log', 'utf8'))
+const logs = Hyperlogger.parseLogs(text)
 ```
 
 #### `Hyperlogger.LEVELS`
@@ -158,11 +158,11 @@ Records are appended to `file` as one JSON object per line. Writes are synchrono
 
 `maxTotalSize` is shared between the live file and up to 9 older copies, so each file holds about a tenth of it (10 MiB each by default). When the live file goes over its share, it becomes `file.1`, the older copies move up one (`file.1` to `file.2`, and so on), and a new live file is started. When all 9 older copies exist, the oldest is deleted to make room.
 
-If rotation fails, for example because another program has the file open on Windows or the folder has become read-only, the logger keeps appending to the live file and tries again at most once a second. No records are lost; the live file grows past its share until rotation succeeds. If the file cannot be reopened at all, records are dropped until it can, and reopening is retried at most once a second.
+If rotation fails, for example because another program has the file open on Windows or the folder has become read-only, the logger keeps appending to the live file and tries again later. No records are lost; the live file grows past its share until rotation succeeds. If the file cannot be reopened at all, records are dropped until it can, and reopening is retried periodically.
 
 A rotation interrupted part way, for example by a crash, can leave a `file.rotating` copy behind. It is moved into the older copies on the next rotation or the next start.
 
-Loggers in the same process that use the same `file` share one writer, so they never rotate the file out from under each other. Separate processes should each use their own `file`.
+Use one logger per file, and pass it around rather than creating another logger on the same `file`: two loggers writing the same file, in one process or several, rotate it out from under each other.
 
 ## License
 
