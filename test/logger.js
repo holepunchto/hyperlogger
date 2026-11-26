@@ -741,3 +741,106 @@ test("if readLogs fails on a read error partway through, prior file's records wi
   t.alike(records, firstFile, 'every record from the first file was handed out before the error')
   t.is(open, 0, 'every file was closed')
 })
+
+test('maxTotalSize must be a number greater than 10', async (t) => {
+  const dir = await t.tmp()
+  const file = path.join(dir, 'app.log')
+
+  for (const maxTotalSize of ['100MB', NaN, Infinity, -1, 0, 5, 10, null, {}]) {
+    t.exception.all(
+      () => new Hyperlogger({ file, maxTotalSize }),
+      /maxTotalSize must be a number greater than 10/,
+      `rejects ${typeof maxTotalSize === 'number' ? maxTotalSize : JSON.stringify(maxTotalSize)}`
+    )
+  }
+  t.absent(fs.existsSync(file), 'a rejected logger never created its file')
+
+  const logger = new Hyperlogger({ file, maxTotalSize: 11 })
+  t.teardown(() => logger.close())
+  logger.info('just above the limit works')
+
+  t.alike(
+    (await Array.fromAsync(Hyperlogger.readLogs(file))).map((record) => record.body),
+    ['just above the limit works']
+  )
+})
+
+test('a bad maxTotalSize can no longer rotate the logs away on every start', async (t) => {
+  const dir = await t.tmp()
+  const file = path.join(dir, 'app.log')
+
+  for (let start = 0; start < 3; start++) {
+    t.exception.all(() => new Hyperlogger({ file, maxTotalSize: '100MB' }), /maxTotalSize/)
+    const logger = new Hyperlogger({ file })
+    logger.info(`start ${start}`)
+    logger.close()
+  }
+
+  t.alike(fs.readdirSync(dir), ['app.log'], 'still one file after three starts')
+  t.alike(bodies(file), ['start 0', 'start 1', 'start 2'])
+})
+
+test('a leftover .rotating file is moved into the history when a logger starts', async (t) => {
+  const dir = await t.tmp()
+  const file = path.join(dir, 'app.log')
+  const line = (body) => JSON.stringify({ body }) + '\n'
+
+  // a crash part way through a rotation: the old live file is still in .rotating
+  fs.writeFileSync(`${file}.1`, line('oldest'))
+  fs.writeFileSync(`${file}.rotating`, line('interrupted rotation'))
+  fs.writeFileSync(file, line('live'))
+
+  const logger = new Hyperlogger({ file })
+  t.teardown(() => logger.close())
+
+  t.absent(fs.existsSync(`${file}.rotating`), 'no .rotating left behind')
+  t.alike(fs.readdirSync(dir).toSorted(), ['app.log', 'app.log.1', 'app.log.2'])
+  t.alike(
+    (await Array.fromAsync(Hyperlogger.readLogs(file))).map((record) => record.body),
+    ['oldest', 'interrupted rotation', 'live'],
+    'it slots in between the older files and the live one'
+  )
+})
+
+test('readLogs keeps its files open until the stream ends, however it ends', async (t) => {
+  // room for all 300 records, spread across several files
+  const { file, logger } = await createLogger(t, { maxTotalSize: 10 * 8000 })
+  for (let i = 0; i < 300; i++) logger.info(`line ${i}`)
+  logger.close()
+  const files = fs.readdirSync(path.dirname(file)).length
+  t.ok(files > 1 && !fs.existsSync(`${file}.9`), 'several files, none deleted yet')
+
+  let open = 0
+  const openSync = stubfs(t, 'openSync', (...args) => {
+    const fd = openSync(...args)
+    open++
+    return fd
+  })
+  const closeSync = stubfs(t, 'closeSync', (fd) => {
+    open--
+    return closeSync(fd)
+  })
+
+  // started but not finished: every file stays open
+  const iterator = Hyperlogger.readLogs(file)[Symbol.asyncIterator]()
+  await iterator.next()
+  t.is(open, files, 'a started stream holds every log file open')
+
+  // finishing it (here, the same as breaking out of a loop) closes them
+  await iterator.return()
+  t.is(open, 0, 'ending the stream closes them')
+
+  // read to the end
+  let count = 0
+  for await (const record of Hyperlogger.readLogs(file)) count += record ? 1 : 0
+  t.is(count, 300, 'every record was read')
+  t.is(open, 0, 'reading to the end closes them')
+
+  // destroyed
+  const stream = Hyperlogger.readLogs(file)
+  await new Promise((resolve) => stream.once('data', resolve))
+  t.is(open, files, 'open while reading')
+  stream.destroy()
+  await new Promise((resolve) => stream.once('close', resolve))
+  t.is(open, 0, 'destroying the stream closes them')
+})
