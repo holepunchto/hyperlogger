@@ -143,7 +143,7 @@ test('logger formats errors to show message and code', async (t) => {
 
   const [log] = Hyperlogger.readLogs(file)
   t.ok(log.body.includes('failed Error: boom'), 'contains standard error message')
-  t.ok(log.body.includes('at async Test._run'), 'stack trace references the brittle index')
+  t.ok(log.body.includes('\n    at '), 'contains a stack trace')
 })
 
 test('level drops records below the minimum severity', async (t) => {

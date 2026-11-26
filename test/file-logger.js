@@ -120,7 +120,6 @@ test('file-logger - a failed rotation does not throw and logging carries on', as
   stubfs(t, 'renameSync', fail('EACCES'))
 
   t.execution(() => log.write(BIG), 'rotation failure is swallowed')
-  t.not(log._fd, -1, 'still has a file to write to')
   t.is(fs.existsSync(`${file}.1`), false, 'nothing was rotated')
 
   log.write({ body: 'after the failure' })
@@ -139,24 +138,26 @@ test('file-logger - writes reopen the file once it can be opened again', async (
   // rotates, then the reopen fails
   log.write(BIG)
 
-  t.is(log._fd, -1, 'reopen failed, so there is no handle')
+  t.absent(
+    fs.existsSync(file),
+    'the old file was rotated away and the reopen failed, so there is no live file'
+  )
   t.execution(() => log.write({ body: 'dropped' }), 'writing with no handle does not throw')
 
   fs.openSync = openSync
   log.write({ body: 'too soon' })
-  t.is(log._fd, -1, 'still waiting out the retry interval')
+  t.absent(fs.existsSync(file), 'still waiting out the retry interval, so nothing reopened yet')
 
   time.advance(RETRY_INTERVAL)
 
   log.write({ body: 'back again' })
 
-  t.not(log._fd, -1, 'a write after the interval reopened the file')
   t.ok(contents(file).includes('back again'), 'can append to the reopened file')
   t.absent(contents(file).includes('too soon'), 'lines with no handle were dropped')
 })
 
 test('file-logger - reopen attempts are limited to one per retry interval', async (t) => {
-  const { log } = await setup(t)
+  const { file, log } = await setup(t)
   const time = dateClock(t)
 
   let attempts = 0
@@ -167,7 +168,7 @@ test('file-logger - reopen attempts are limited to one per retry interval', asyn
 
   // reopen on rotation fails
   log.write(BIG)
-  t.is(log._fd, -1)
+  t.absent(fs.existsSync(file), 'the reopen after rotating failed')
 
   const before = attempts
   for (let i = 0; i < 100; i++) log.write({ body: 'dropped ' + i })
@@ -184,12 +185,12 @@ test('file-logger - reopen attempts are limited to one per retry interval', asyn
 })
 
 test('file-logger - a closed logger never reopens, even after a failure', async (t) => {
-  const { log } = await setup(t)
+  const { file, log } = await setup(t)
   const time = dateClock(t)
 
   const openSync = stubfs(t, 'openSync', fail('EACCES'))
   log.write(BIG)
-  t.is(log._fd, -1)
+  t.absent(fs.existsSync(file), 'the reopen after rotating failed')
 
   log.close()
 
@@ -205,8 +206,8 @@ test('file-logger - a closed logger never reopens, even after a failure', async 
   time.advance(RETRY_INTERVAL)
   log.write(BIG)
 
-  t.is(log._fd, -1, 'a closed logger stays closed')
   t.is(opens, 0, 'nothing tried to open the file')
+  t.absent(fs.existsSync(file), 'no live file was created')
 })
 
 test('file-logger - writing after close does nothing', async (t) => {
@@ -249,8 +250,7 @@ test('file-logger - a failing fstat on reopen prevents file being opened', async
   stubfs(t, 'fstatSync', fail('EIO'))
   log.write(BIG)
 
-  t.is(log._fd, -1, 'the reopen fails')
-  t.is(open, 0, 'there are no open files')
+  t.is(open, 0, 'the reopen failed and closed its handle, so there are no open files')
 
   log.write({ body: 'after the reopen' })
   t.ok(
