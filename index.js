@@ -90,29 +90,29 @@ class Hyperlogger {
   }
 
   debug(...args) {
-    this._write('DEBUG', ...args)
+    this._write('DEBUG', args)
   }
 
   verboseDebug(...args) {
     if (!this._verbose) return
-    this._write('DEBUG', ...args)
+    this._write('DEBUG', args)
   }
 
   info(...args) {
-    this._write('INFO', ...args)
+    this._write('INFO', args)
   }
 
   verboseInfo(...args) {
     if (!this._verbose) return
-    this._write('INFO', ...args)
+    this._write('INFO', args)
   }
 
   warn(...args) {
-    this._write('WARN', ...args)
+    this._write('WARN', args)
   }
 
   error(...args) {
-    this._write('ERROR', ...args)
+    this._write('ERROR', args)
   }
 
   time(label) {
@@ -130,23 +130,31 @@ class Hyperlogger {
     this._timers.delete(label)
   }
 
-  _write(level, ...args) {
+  _write(level, args) {
     if (this._muted || this._closed) return
     if (LEVELS[level] < this._level) return
 
     // if log attributes have been provided extract them
-    let attributes = {}
+    let attributes
     if (isPlainObject(args[args.length - 1])) {
-      attributes = normaliseAttributes(args.pop(), this._normaliseOpts)
+      attributes = normaliseAttributes(args.at(-1), this._normaliseOpts)
     }
 
-    const body = args.map((arg) => format(arg)).join(' ')
+    let body = ''
+    if (attributes) {
+      body = args
+        .slice(0, -1)
+        .map((arg) => format(arg))
+        .join(' ')
+    } else {
+      body = args.map((arg) => format(arg)).join(' ')
+    }
 
-    const log = this._buildRecord(level, body, attributes)
+    const log = this._buildRecord(level, body, attributes ?? {})
     const method = level.toLowerCase()
 
     // just for dev purposes
-    if (this._dev && this._level === LEVELS.DEBUG) {
+    if (this._dev) {
       const log = console[method] || console.log
       log(...args)
     }

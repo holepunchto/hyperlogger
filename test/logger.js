@@ -211,7 +211,7 @@ test('verbose methods only log when verbose is on, and still respect level', asy
   t.alike(severities(debug.file), ['DEBUG', 'INFO'])
 })
 
-test('dev prints to the console only when the level is DEBUG', async (t) => {
+test('dev prints to the console regardless of level', async (t) => {
   const run = async (opts) => {
     const { logger } = await createLogger(t, opts)
     return captureConsole(() => {
@@ -226,14 +226,53 @@ test('dev prints to the console only when the level is DEBUG', async (t) => {
     await run({ dev: true, level: 'DEBUG' }),
     [
       ['debug', 'd'],
-      ['info', 'i'],
+      ['info', 'i', { attribute: true }],
       ['warn', 'w'],
       ['error', 'e']
     ],
-    'dev at DEBUG: each level goes to its console method, without the attributes object'
+    'dev at DEBUG: each level goes to its console method'
   )
-  t.alike(await run({ dev: true, level: 'INFO' }), [], 'dev at INFO: nothing printed')
+  t.alike(
+    await run({ dev: true, level: 'INFO' }),
+    [
+      ['info', 'i', { attribute: true }],
+      ['warn', 'w'],
+      ['error', 'e']
+    ],
+    'dev at INFO: info and above goes to its console method'
+  )
+  t.alike(
+    await run({ dev: true, level: 'WARN' }),
+    [
+      ['warn', 'w'],
+      ['error', 'e']
+    ],
+    'dev at WARN: warn and above goes to its console method'
+  )
+  t.alike(
+    await run({ dev: true, level: 'ERROR' }),
+    [['error', 'e']],
+    'dev at ERROR: error and above goes to its console method'
+  )
   t.alike(await run({ dev: false, level: 'DEBUG' }), [], 'dev off: nothing printed')
+})
+
+test('dev output gets the same arguments as the call, attributes included', async (t) => {
+  const { file, logger } = await createLogger(t, { dev: true })
+  const attributes = { roomId: 'abc', count: 2 }
+
+  const printed = captureConsole(() => logger.info('hello', 'world', attributes))
+
+  t.alike(printed, [['info', 'hello', 'world', attributes]], 'the console sees every argument')
+  t.is(printed[0][3], attributes, 'the attributes object itself, not a copy')
+
+  const [record] = readLines(file)
+  t.is(record.body, 'hello world', 'the file body is the message without the attributes')
+  t.alike(
+    record.attributes,
+    { roomId: 'abc', count: 2 },
+    'the file keeps the attributes separately'
+  )
 })
 
 test('after close, every method is safe to call and nothing more is written', async (t) => {
