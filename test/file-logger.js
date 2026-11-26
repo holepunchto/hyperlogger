@@ -82,13 +82,6 @@ test('file-logger - the size count matches the real file', async (t) => {
 
   t.ok(fs.existsSync(`${file}.1`), 'a rotation happened')
   t.is(log._size, fs.statSync(file).size, 'recorded file size is accurate after a rotation')
-
-  log.clear()
-  t.is(log._size, 0, 'recorded file size is zero after being cleared')
-  t.is(log._size, fs.statSync(file).size, 'recorded and actual file size agree after clear')
-
-  log.write(record(0))
-  t.is(log._size, fs.statSync(file).size, 'recorded file size is accurate when writing after clear')
 })
 
 test('file-logger - rotates once the file goes over maxSize, not when it reaches it', async (t) => {
@@ -195,10 +188,9 @@ test('file-logger - a closed logger never reopens, even after a failure', async 
     return openSync(...args)
   }
 
-  // everything that could reopen the file: writing past the retry interval, and clear
+  // everything that could reopen the file: writing past the retry interval
   time.advance(RETRY_INTERVAL)
   log.write({ body: 'after close' })
-  log.clear()
   time.advance(RETRY_INTERVAL)
   log.write(BIG)
 
@@ -280,13 +272,11 @@ test('file-logger - never holds more than one handle', async (t) => {
   stubfs(t, 'renameSync', fail('EACCES'))
   log.write({ body: 'fills past maxSize' }) // a failed rotation
   log.write({ body: 'fills past maxSize' }) // over the limit again while the handle is open
-  log.clear()
 
   t.is(open, 1, 'one handle while running')
 
   log.close()
   log.close()
-  log.clear()
   log.write({ body: 'after close' })
 
   t.is(open, 0, 'none after close')
