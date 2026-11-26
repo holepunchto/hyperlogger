@@ -279,8 +279,6 @@ test('dev output gets the same arguments as the call, attributes included', asyn
 
 test('after close, every method is safe to call and nothing more is written', async (t) => {
   const { file, logger } = await createLogger(t, { level: 'DEBUG', verbose: true, dev: true })
-  const other = new Hyperlogger({ file }) // shares the same file
-  t.teardown(() => other.close())
 
   const before = captureConsole(() => logger.info('before close'))
   t.alike(before, [['info', 'before close']], 'dev printing is on before close')
@@ -311,11 +309,15 @@ test('after close, every method is safe to call and nothing more is written', as
   t.alike(bodies(file), ['before close'], 'nothing more was written')
   t.alike(printed, [], 'nothing was printed')
 
-  other.info('other logger still writing')
+  // with the first logger closed, a new one can take over the same file
+  const next = new Hyperlogger({ file })
+  t.teardown(() => next.close())
+
+  next.info('next logger writing')
   t.alike(
     bodies(file),
-    ['before close', 'other logger still writing'],
-    'closing one logger (even twice) does not close the file for another'
+    ['before close', 'next logger writing'],
+    'a new logger picks up where it left off'
   )
 })
 

@@ -111,7 +111,7 @@ function fail(code) {
   }
 }
 
-async function setup(t, opts = {}) {
+async function createFileLog(t, opts = {}) {
   const dir = await t.tmp()
   const file = path.join(dir, 'app.log')
 
@@ -158,7 +158,7 @@ module.exports = {
   stubfs,
   dateClock,
   fail,
-  setup,
+  createFileLog,
   line,
   record,
   readAll,

@@ -22,6 +22,8 @@ class Hyperlogger {
       maxBytes
     } = opts
 
+    if (maxTotalSize !== undefined) checkMaxTotalSize(maxTotalSize)
+
     this._muted = false
     this._dev = dev
     this._verbose = verbose
@@ -31,7 +33,7 @@ class Hyperlogger {
     this._normaliseOpts = createOptions({ maxDepth, maxBytes })
     this._closed = false
 
-    // logs are split across N files sharing total size (100MB default)
+    // logs are split across N files sharing the total size (100 MiB by default)
     const maxFileSize = maxTotalSize ? Math.ceil(maxTotalSize / FileLog.LOG_FILES) : undefined
 
     if (file) this._file = new FileLog(file, { maxSize: maxFileSize })
@@ -39,7 +41,6 @@ class Hyperlogger {
 
   static LEVELS = LEVELS
 
-  // logs in write order
   // a stream of every record, oldest first, read one line at a time
   static readLogs(filePath) {
     return Readable.from(records(filePath))
@@ -143,8 +144,8 @@ class Hyperlogger {
 
     // just for dev purposes
     if (this._dev) {
-      const log = console[method] || console.log
-      log(...args)
+      const print = console[method] || console.log
+      print(...args)
     }
 
     this._system[method](body)
@@ -171,6 +172,12 @@ module.exports = Hyperlogger
 function formatElapsed(ns) {
   const ms = Number(ns) / 1e6
   return ms > 1000 ? `${(ms / 1000).toFixed(3)}s` : `${ms.toFixed(3)}ms`
+}
+
+function checkMaxTotalSize(maxTotalSize) {
+  if (typeof maxTotalSize !== 'number' || !Number.isFinite(maxTotalSize) || maxTotalSize <= 10) {
+    throw new RangeError(`maxTotalSize must be a number greater than 10: ${maxTotalSize}`)
+  }
 }
 
 function checkLevel(level) {

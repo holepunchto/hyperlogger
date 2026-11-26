@@ -6,7 +6,7 @@ const {
   stubfs,
   dateClock,
   fail,
-  setup,
+  createFileLog,
   line,
   record,
   readAll,
@@ -17,7 +17,7 @@ const {
 const RETRY_INTERVAL = 1000 // REOPEN_RETRY_INTERVAL in lib/file-logger.js
 const ROTATE_RETRY_INTERVAL = 1000 // ROTATE_RETRY_INTERVAL in lib/file-logger.js
 
-// longer than setup's 40-byte maxSize on its own, so writing it rotates; short lines don't
+// longer than createFileLog's 40-byte maxSize on its own, so writing it rotates; short lines don't
 const BIG = { body: 'fills past maxSize'.padEnd(60, '.') }
 
 test('file-logger - rotation keeps the live file plus 9 older ones', async (t) => {
@@ -61,7 +61,7 @@ test('file-logger - rotation keeps the live file plus 9 older ones', async (t) =
 test('file-logger - rotation keeps every line, in order, with the right number per file', async (t) => {
   const lineSize = line(0).length
   // rotation happens once the file goes over maxSize, so this fits exactly 6 lines
-  const { file, log } = await setup(t, { maxSize: 6 * lineSize - 1 })
+  const { file, log } = await createFileLog(t, { maxSize: 6 * lineSize - 1 })
 
   for (let i = 0; i < 30; i++) log.write(record(i))
 
@@ -98,7 +98,7 @@ test('file-logger - the size count matches the real file', async (t) => {
 test('file-logger - rotates once the file goes over maxSize, not when it reaches it', async (t) => {
   const lineSize = line(0).length
 
-  const exact = await setup(t, { maxSize: 2 * lineSize })
+  const exact = await createFileLog(t, { maxSize: 2 * lineSize })
   exact.log.write(record(0))
   exact.log.write(record(1))
   t.is(fs.existsSync(`${exact.file}.1`), false, 'landing exactly on maxSize does not rotate')
@@ -107,14 +107,14 @@ test('file-logger - rotates once the file goes over maxSize, not when it reaches
   exact.log.write(record(2))
   t.is(lines(`${exact.file}.1`).length, 3, 'the next write goes over and rotates')
 
-  const over = await setup(t, { maxSize: 2 * lineSize - 1 })
+  const over = await createFileLog(t, { maxSize: 2 * lineSize - 1 })
   over.log.write(record(0))
   over.log.write(record(1))
   t.is(lines(`${over.file}.1`).length, 2, 'one byte over maxSize rotates')
 })
 
 test('file-logger - a failed rotation does not throw and logging carries on', async (t) => {
-  const { file, log } = await setup(t)
+  const { file, log } = await createFileLog(t)
 
   // the folder becomes read-only
   stubfs(t, 'renameSync', fail('EACCES'))
@@ -130,7 +130,7 @@ test('file-logger - a failed rotation does not throw and logging carries on', as
 })
 
 test('file-logger - writes reopen the file once it can be opened again', async (t) => {
-  const { file, log } = await setup(t)
+  const { file, log } = await createFileLog(t)
   const time = dateClock(t)
 
   const openSync = stubfs(t, 'openSync', fail('EACCES'))
@@ -157,7 +157,7 @@ test('file-logger - writes reopen the file once it can be opened again', async (
 })
 
 test('file-logger - reopen attempts are limited to one per retry interval', async (t) => {
-  const { file, log } = await setup(t)
+  const { file, log } = await createFileLog(t)
   const time = dateClock(t)
 
   let attempts = 0
@@ -185,7 +185,7 @@ test('file-logger - reopen attempts are limited to one per retry interval', asyn
 })
 
 test('file-logger - a closed logger never reopens, even after a failure', async (t) => {
-  const { file, log } = await setup(t)
+  const { file, log } = await createFileLog(t)
   const time = dateClock(t)
 
   const openSync = stubfs(t, 'openSync', fail('EACCES'))
@@ -211,7 +211,7 @@ test('file-logger - a closed logger never reopens, even after a failure', async 
 })
 
 test('file-logger - writing after close does nothing', async (t) => {
-  const { file, log } = await setup(t, { maxSize: 1000 })
+  const { file, log } = await createFileLog(t, { maxSize: 1000 })
   const time = dateClock(t)
 
   log.write({ body: 'before close' })
@@ -244,7 +244,7 @@ test('file-logger - a failing fstat on reopen prevents file being opened', async
     return closeSync(fd)
   })
 
-  const { file, log } = await setup(t)
+  const { file, log } = await createFileLog(t)
 
   // reopen can't read the new file size
   stubfs(t, 'fstatSync', fail('EIO'))
@@ -295,7 +295,7 @@ test('file-logger - never holds more than one handle', async (t) => {
 })
 
 test('file-logger - rotation recovers after failures without losing any lines', async (t) => {
-  const { file, log } = await setup(t, { maxSize: 6 * line(0).length - 1 }) // 6 lines per file
+  const { file, log } = await createFileLog(t, { maxSize: 6 * line(0).length - 1 }) // 6 lines per file
   const time = dateClock(t)
   const pending = `${file}.rotating`
 
@@ -366,7 +366,7 @@ test('file-logger - rotation recovers after failures without losing any lines', 
 })
 
 test('file-logger - a failed rotation is retried at most once per interval', async (t) => {
-  const { log } = await setup(t, { maxSize: 6 * line(0).length - 1 }) // 6 lines per file
+  const { log } = await createFileLog(t, { maxSize: 6 * line(0).length - 1 }) // 6 lines per file
   const time = dateClock(t)
 
   let attempts = 0
