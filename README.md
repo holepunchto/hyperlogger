@@ -122,17 +122,27 @@ Stop logging. Later calls on this logger are ignored. Calling `close` more than 
 
 Loggers in the same process that use the same `file` share one open file, which is closed when the last of them closes.
 
-#### `const logs = Hyperlogger.readLogs(file)`
+#### `const stream = Hyperlogger.readLogs(file)`
 
-Read every record from a log file and its rotated copies, oldest first: `file.9` down to `file.1`, then `file` itself. Missing files are skipped. Reading does not need, or create, a logger.
+A [streamx](https://github.com/mafintosh/streamx) readable stream of every record from a log file and its rotated copies, oldest first: `file.9` down to `file.1`, then `file` itself. Missing files are skipped. Only JSON objects are returned: lines that aren't valid JSON, or are JSON but not an object, are skipped. Reading does not need, or create, a logger.
 
 ```js
-const logs = Hyperlogger.readLogs('./app.log')
+for await (const record of Hyperlogger.readLogs('./app.log')) {
+  console.log(record.severityText, record.body)
+}
 ```
+
+The files are read as they were when reading started: records written while the stream is being read, including any rotation they cause, are not included.
+
+If any of the files exists but can't be read, the stream fails with that error, so a `for await` loop throws it. All the files are opened before the first record is read, so a file that can't be opened fails the read before any records are returned. An error while reading a file can happen after some records have already been returned.
+
+Breaking out of the loop early closes the stream and its files. A stream that has started reading keeps all its files open until it is read to the end, broken out of, or destroyed, so always do one of those. To collect everything into an array, use `await Array.fromAsync(Hyperlogger.readLogs('./app.log'))`.
+
+**Memory.** Records are read one line at a time, in 64 KiB pieces, so memory use stays small however large the logs are, as long as lines are. Each record's attributes are limited to roughly `maxBytes` (256 KiB by default), so lines are normally around that size or smaller. Message bodies are not limited, though: a very long message makes an equally long line, and that line is held in memory whole while it's read. The stream also reads a few records ahead (about 16), which are held in memory until they're used.
 
 #### `const logs = Hyperlogger.parseLogs(rawLogs)`
 
-Parse a newline-delimited JSON log string into an array of records. Empty lines or invalid lines are ignored.
+Parse a newline-delimited JSON log string into an array of records. Only JSON objects are returned: empty lines, lines that aren't valid JSON, and JSON that isn't an object are skipped, the same as `readLogs`.
 
 ```js
 const logs = Hyperlogger.parseLogs(fs.readFileSync('./app.log', 'utf8'))

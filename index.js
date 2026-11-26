@@ -1,4 +1,6 @@
 const fs = require('fs')
+const b4a = require('b4a')
+const { Readable } = require('streamx')
 const FileLog = require('./lib/file-logger')
 const SystemLog = require('#system-logger')
 const hrtime = require('#hrtime')
@@ -38,24 +40,9 @@ class Hyperlogger {
   static LEVELS = LEVELS
 
   // logs in write order
+  // a stream of every record, oldest first, read one line at a time
   static readLogs(filePath) {
-    const last = FileLog.LOG_FILES - 1
-    const logs = []
-
-    for (let i = last; i >= 0; i--) {
-      try {
-        let raw
-
-        if (i === 0) raw = fs.readFileSync(filePath, { encoding: 'utf8' })
-        else raw = fs.readFileSync(`${filePath}.${i}`, { encoding: 'utf8' })
-
-        logs.push(...Hyperlogger.parseLogs(raw))
-      } catch (err) {
-        if (err.code !== 'ENOENT') throw err
-      }
-    }
-
-    return logs
+    return Readable.from(records(filePath))
   }
 
   static parseLogs(rawLogs) {
@@ -63,9 +50,8 @@ class Hyperlogger {
 
     const logs = []
     for (const log of logLines) {
-      try {
-        logs.push(JSON.parse(log))
-      } catch {}
+      const record = parseRecord(log)
+      if (record !== null) logs.push(record)
     }
 
     return logs
@@ -197,4 +183,103 @@ function isPlainObject(value) {
   if (value === null || typeof value !== 'object') return false
   const proto = Object.getPrototypeOf(value)
   return proto === Object.prototype || proto === null
+}
+
+const CHUNK_SIZE = 65_536
+const NEWLINE = 0x0a
+
+async function* records(filePath) {
+  const files = []
+
+  try {
+    for (let i = FileLog.LOG_FILES - 1; i >= 0; i--) {
+      let fd
+      try {
+        fd = fs.openSync(i === 0 ? filePath : `${filePath}.${i}`, 'r')
+      } catch (err) {
+        if (err.code === 'ENOENT') continue
+        throw err
+      }
+
+      try {
+        files.push({ fd, size: fs.fstatSync(fd).size })
+      } catch (err) {
+        fs.closeSync(fd)
+        throw err
+      }
+    }
+
+    const chunk = b4a.alloc(CHUNK_SIZE)
+
+    for (const { fd, size } of files) {
+      let position = 0
+
+      while (position < size) {
+        const read = fs.readSync(fd, chunk, 0, Math.min(CHUNK_SIZE, size - position), position)
+        if (read === 0) break
+
+        const data = chunk.subarray(0, read)
+        const last = data.lastIndexOf(NEWLINE)
+
+        // handle multi-chunk-sized records
+        if (last === -1) {
+          const { line, next } = readLongLine(fd, data, position + read, size)
+          const record = parseRecord(b4a.toString(line, 'utf8'))
+
+          if (record !== null) yield record
+          position = next
+
+          continue
+        }
+
+        // yield each record in the chunk
+        let start = 0
+        while (start <= last) {
+          const end = data.indexOf(NEWLINE, start)
+          const record = parseRecord(b4a.toString(data.subarray(start, end), 'utf8'))
+          if (record !== null) yield record
+          start = end + 1
+        }
+
+        // carry on from just after the last newline
+        position += last + 1
+      }
+    }
+  } finally {
+    for (const { fd } of files) fs.closeSync(fd)
+  }
+}
+
+function readLongLine(fd, first, position, size) {
+  const parts = [b4a.from(first)]
+  const chunk = b4a.alloc(CHUNK_SIZE)
+
+  while (position < size) {
+    const read = fs.readSync(fd, chunk, 0, Math.min(CHUNK_SIZE, size - position), position)
+    if (read === 0) break
+
+    const end = chunk.subarray(0, read).indexOf(NEWLINE)
+    if (end !== -1) {
+      parts.push(b4a.from(chunk.subarray(0, end)))
+      return { line: b4a.concat(parts), next: position + end + 1 }
+    }
+
+    parts.push(b4a.from(chunk.subarray(0, read)))
+    position += read
+  }
+
+  return { line: b4a.concat(parts), next: size }
+}
+
+function parseRecord(line) {
+  if (line.length === 0) return null
+
+  let value
+  try {
+    value = JSON.parse(line)
+  } catch {
+    return null
+  }
+
+  return isPlainObject(value) ? value : null
 }

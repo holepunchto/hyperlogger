@@ -9,7 +9,9 @@ const {
   severities,
   durationMs,
   bodies,
-  readLines
+  readLines,
+  stubfs,
+  fail
 } = require('./helper')
 
 test('check all standard log types produce outputs', async (t) => {
@@ -141,7 +143,7 @@ test('logger formats errors to show message and code', async (t) => {
 
   logger.error('failed', new Error('boom'))
 
-  const [log] = Hyperlogger.readLogs(file)
+  const [log] = await Array.fromAsync(Hyperlogger.readLogs(file))
   t.ok(log.body.includes('failed Error: boom'), 'contains standard error message')
   t.ok(log.body.includes('\n    at '), 'contains a stack trace')
 })
@@ -481,9 +483,13 @@ test('placeholders in messages are not substituted', async (t) => {
   t.alike(bodies(file), ['done 50%d 3', '100%% sure x'])
 })
 
-test('parseLogs ignores blank lines and incorrect JSON', (t) => {
+test('parseLogs only returns JSON objects, skipping blank, invalid and non-object lines', (t) => {
   t.alike(Hyperlogger.parseLogs('\n{"a":1}\n\n{"b":2}\n'), [{ a: 1 }, { b: 2 }])
   t.alike(Hyperlogger.parseLogs('{"a":1}\nnot json\n'), [{ a: 1 }])
+  t.alike(Hyperlogger.parseLogs('{"a":1}\n42\n"text"\n[1, 2]\nnull\ntrue\n{"b":2}'), [
+    { a: 1 },
+    { b: 2 }
+  ])
 })
 
 test('logger passes maxDepth through to the attributes', async (t) => {
@@ -516,4 +522,220 @@ test('a missing log folder throws, and works once the folder exists', async (t) 
 
   logger.info('now it works')
   t.alike(bodies(file), ['now it works'], 'the failed attempt left nothing behind')
+})
+
+test('readLogs streams every record, oldest first, across the rotated files', async (t) => {
+  const { file, logger } = await createLogger(t, { maxTotalSize: 10 * 400 }) // about 3 lines per file
+
+  for (let i = 0; i < 12; i++) logger.info(`line ${i}`)
+  t.ok(fs.existsSync(`${file}.1`), 'the records are spread across rotated files')
+
+  const stream = Hyperlogger.readLogs(file)
+  t.absent(Array.isArray(stream), 'not an array')
+  t.is(typeof stream[Symbol.asyncIterator], 'function', 'can be used with for await')
+
+  const records = []
+  for await (const record of stream) records.push(record.body)
+
+  t.alike(
+    records,
+    Array.from({ length: 12 }, (_, i) => `line ${i}`),
+    'every record, in the order written'
+  )
+})
+
+test('readLogs can be stopped early', async (t) => {
+  const { file, logger } = await createLogger(t, { maxTotalSize: 10 * 400 })
+
+  for (let i = 0; i < 12; i++) logger.info(`line ${i}`)
+
+  const stream = Hyperlogger.readLogs(file)
+  const records = []
+  for await (const record of stream) {
+    records.push(record.body)
+    if (records.length === 3) break
+  }
+
+  t.alike(records, ['line 0', 'line 1', 'line 2'], 'the first records, oldest first')
+  t.ok(stream.destroyed, 'breaking out of the loop closes the stream')
+})
+
+test('readLogs reads the files as they were when reading started', async (t) => {
+  const { file, logger } = await createLogger(t, { maxTotalSize: 10 * 400 })
+
+  for (let i = 0; i < 12; i++) logger.info(`line ${i}`)
+
+  const records = []
+  for await (const record of Hyperlogger.readLogs(file)) {
+    records.push(record.body)
+
+    // once reading has started, keep logging: the files rotate (and the oldest are
+    // deleted) underneath the stream
+    if (records.length === 1) {
+      for (let i = 12; i < 60; i++) logger.info(`line ${i}`)
+    }
+  }
+
+  t.alike(
+    records,
+    Array.from({ length: 12 }, (_, i) => `line ${i}`),
+    'exactly the records that existed when reading started, nothing skipped or repeated'
+  )
+})
+
+test('readLogs on a file that does not exist gives no records', async (t) => {
+  const dir = await t.tmp()
+
+  t.alike(await Array.fromAsync(Hyperlogger.readLogs(path.join(dir, 'missing.log'))), [])
+})
+
+test('readLogs returns lines of any length whole, including around the read size', async (t) => {
+  const dir = await t.tmp()
+  const file = path.join(dir, 'app.log')
+  const CHUNK = 65_536
+
+  const line = (total, char = 'x') => JSON.stringify({ body: char.repeat(total - 12) }) + '\n'
+  const lines = [
+    line(200_000),
+    line(20),
+    line(CHUNK - 1),
+    line(CHUNK),
+    line(CHUNK + 1),
+    line(20),
+    JSON.stringify({ body: 'é😀'.repeat(40_000) }) + '\n',
+    JSON.stringify({ body: 'y'.repeat(70_000) })
+  ]
+  fs.writeFileSync(file, lines.join(''))
+
+  const records = await Array.fromAsync(Hyperlogger.readLogs(file))
+  t.alike(
+    records.map((record) => record.body),
+    lines.map((l) => JSON.parse(l).body),
+    'every line comes back whole and in order'
+  )
+})
+
+test('readLogs only returns JSON objects', async (t) => {
+  const dir = await t.tmp()
+  const file = path.join(dir, 'app.log')
+
+  fs.writeFileSync(
+    file,
+    [
+      '{"body":"first"}',
+      '42',
+      '"text"',
+      '[1, 2]',
+      'null',
+      'true',
+      'not json at all',
+      '',
+      '{"body":"half writt',
+      '{"body":"last"}'
+    ].join('\n') + '\n'
+  )
+
+  const records = await Array.fromAsync(Hyperlogger.readLogs(file))
+  t.alike(
+    records,
+    [{ body: 'first' }, { body: 'last' }],
+    'everything that is not a JSON object is skipped'
+  )
+})
+
+test('readLogs fails if a log file cannot be read, and closes every file', async (t) => {
+  const { file, logger } = await createLogger(t, { maxTotalSize: 10 * 400 })
+  for (let i = 0; i < 12; i++) logger.info(`line ${i}`)
+  logger.close()
+
+  let open = 0
+  const openSync = stubfs(t, 'openSync', (target, ...args) => {
+    if (target === `${file}.1`) fail('EACCES')()
+    const fd = openSync(target, ...args)
+    open++
+    return fd
+  })
+  const closeSync = stubfs(t, 'closeSync', (fd) => {
+    open--
+    return closeSync(fd)
+  })
+
+  const records = []
+  await t.exception(async () => {
+    for await (const record of Hyperlogger.readLogs(file)) records.push(record)
+  }, /EACCES/)
+
+  t.alike(records, [], 'files are opened before any record is read, so none were handed out')
+  t.is(open, 0, 'the files opened before the failure were closed')
+})
+
+test('readLogs closes the file if reading its size fails', async (t) => {
+  const { file, logger } = await createLogger(t, { maxTotalSize: 10 * 400 })
+  for (let i = 0; i < 12; i++) logger.info(`line ${i}`)
+  logger.close()
+
+  let open = 0
+  const openSync = stubfs(t, 'openSync', (...args) => {
+    const fd = openSync(...args)
+    open++
+    return fd
+  })
+  const closeSync = stubfs(t, 'closeSync', (fd) => {
+    open--
+    return closeSync(fd)
+  })
+  stubfs(t, 'fstatSync', fail('EIO'))
+
+  await t.exception(async () => {
+    for await (const record of Hyperlogger.readLogs(file)) {
+      t.fail('no record expected: ' + record.body)
+    }
+  }, /EIO/)
+
+  t.is(open, 0, 'the file whose size could not be read was closed too')
+})
+
+test("if readLogs fails on a read error partway through, prior file's records will still have been provided", async (t) => {
+  const { file, logger } = await createLogger(t, { maxTotalSize: 10 * 400 })
+  for (let i = 0; i < 12; i++) logger.info(`line ${i}`)
+  logger.close()
+
+  const oldest = fs
+    .readdirSync(path.dirname(file))
+    .map((name) => path.join(path.dirname(file), name))
+    .sort()
+    .reverse()[0]
+  const firstFile = readLines(oldest).map((record) => record.body)
+  t.ok(firstFile.length > 0 && oldest !== file, 'the logs span more than one file')
+
+  const opened = []
+  let open = 0
+  const openSync = stubfs(t, 'openSync', (...args) => {
+    const fd = openSync(...args)
+    opened.push(fd)
+    open++
+    return fd
+  })
+  const closeSync = stubfs(t, 'closeSync', (fd) => {
+    open--
+    return closeSync(fd)
+  })
+
+  // reading the second file fails
+  const readSync = stubfs(t, 'readSync', (fd, ...args) => {
+    if (fd === opened[1]) fail('EIO')()
+    return readSync(fd, ...args)
+  })
+
+  const records = []
+  await t.exception(
+    async () => {
+      for await (const record of Hyperlogger.readLogs(file)) records.push(record.body)
+    },
+    /EIO/,
+    'the loop throws the read error'
+  )
+
+  t.alike(records, firstFile, 'every record from the first file was handed out before the error')
+  t.is(open, 0, 'every file was closed')
 })
