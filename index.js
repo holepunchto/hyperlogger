@@ -9,15 +9,17 @@ const { createOptions } = normaliseAttributes
 const LEVELS = { DEBUG: 5, INFO: 9, WARN: 13, ERROR: 17 }
 
 class Hyperlogger {
-  constructor({
-    dev = false,
-    verbose = false,
-    file,
-    level = 'INFO',
-    maxTotalSize,
-    maxDepth,
-    maxBytes
-  } = {}) {
+  constructor(opts = {}) {
+    const {
+      dev = false,
+      verbose = false,
+      file,
+      level = 'INFO',
+      maxTotalSize,
+      maxDepth,
+      maxBytes
+    } = opts
+
     this._muted = false
     this._dev = dev
     this._verbose = verbose

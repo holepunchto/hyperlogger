@@ -132,7 +132,7 @@ const logs = Hyperlogger.readLogs('./app.log')
 
 #### `const logs = Hyperlogger.parseLogs(rawLogs)`
 
-Parse a newline-delimited JSON log string into an array of records. Empty lines are ignored; invalid JSON throws.
+Parse a newline-delimited JSON log string into an array of records. Empty lines or invalid lines are ignored.
 
 ```js
 const logs = Hyperlogger.parseLogs(fs.readFileSync('./app.log', 'utf8'))
