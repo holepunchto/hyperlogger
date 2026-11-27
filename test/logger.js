@@ -862,10 +862,9 @@ test('invalid maxDepth or maxBytes throw', async (t) => {
 })
 
 test('rotation counts what is already in the file when a logger starts', async (t) => {
-  const share = 1000 // maxTotalSize is split across 10 files
+  const share = 1000
   const body = 'a known message'
 
-  // every record has the same shape, so its line is always this many bytes
   const lineSize =
     JSON.stringify({
       timeUnixNano: '0'.repeat(19),
@@ -876,10 +875,8 @@ test('rotation counts what is already in the file when a logger starts', async (
       attributes: {}
     }).length + 1
 
-  // a missing file reads as no size, so a failed check doesn't crash the whole run
   const sizeOf = (file) => (fs.existsSync(file) ? fs.statSync(file).size : null)
 
-  // an existing file of exactly `size` bytes: one filler record and its newline
   const filler = (size) => JSON.stringify({ body: 'f'.repeat(size - 12) }) + '\n'
 
   const run = async (existing) => {

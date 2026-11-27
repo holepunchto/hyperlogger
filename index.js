@@ -130,15 +130,21 @@ class Hyperlogger {
       attributes = normaliseAttributes(args.at(-1), this._normaliseOpts)
     }
 
-    let body = ''
+    let bodyArgs = args
     if (attributes) {
-      body = args
-        .slice(0, -1)
-        .map((arg) => format(arg))
-        .join(' ')
-    } else {
-      body = args.map((arg) => format(arg)).join(' ')
+      bodyArgs = args.slice(0, -1)
     }
+
+    const bodyParts = []
+    for (const a of bodyArgs) {
+      try {
+        bodyParts.push(format(a))
+      } catch {
+        bodyParts.push('[Format Failure]')
+      }
+    }
+
+    const body = bodyParts.join(' ')
 
     const log = this._buildRecord(level, body, attributes ?? {})
     const method = level.toLowerCase()

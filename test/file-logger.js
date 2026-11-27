@@ -14,10 +14,9 @@ const {
   contents
 } = require('./helper')
 
-const RETRY_INTERVAL = 1000 // REOPEN_RETRY_INTERVAL in lib/file-logger.js
-const ROTATE_RETRY_INTERVAL = 1000 // ROTATE_RETRY_INTERVAL in lib/file-logger.js
+const RETRY_INTERVAL = 1000
+const ROTATE_RETRY_INTERVAL = 1000
 
-// longer than createFileLog's 40-byte maxSize on its own, so writing it rotates; short lines don't
 const BIG = { body: 'fills past maxSize'.padEnd(60, '.') }
 
 test('file-logger - rotation keeps the live file plus 9 older ones', async (t) => {
