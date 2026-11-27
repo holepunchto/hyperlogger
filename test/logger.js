@@ -742,26 +742,27 @@ test("if readLogs fails on a read error partway through, prior file's records wi
   t.is(open, 0, 'every file was closed')
 })
 
-test('maxTotalSize must be a number greater than 10', async (t) => {
+test('maxTotalSize must be a number of at least 10', async (t) => {
   const dir = await t.tmp()
   const file = path.join(dir, 'app.log')
 
-  for (const maxTotalSize of ['100MB', NaN, Infinity, -1, 0, 5, 10, null, {}]) {
+  for (const maxTotalSize of ['100MB', NaN, Infinity, -1, 0, 5, 9, 9.99, null, {}]) {
     t.exception.all(
       () => new Hyperlogger({ file, maxTotalSize }),
-      /maxTotalSize must be a number greater than 10/,
+      /maxTotalSize must be a number greater than or equal to 10/,
       `rejects ${typeof maxTotalSize === 'number' ? maxTotalSize : JSON.stringify(maxTotalSize)}`
     )
   }
   t.absent(fs.existsSync(file), 'a rejected logger never created its file')
 
-  const logger = new Hyperlogger({ file, maxTotalSize: 11 })
+  const logger = new Hyperlogger({ file, maxTotalSize: 10 })
   t.teardown(() => logger.close())
-  logger.info('just above the limit works')
+  logger.info('the minimum works')
 
+  // each file only gets ceil(10 / 10) = 1 byte, so the line has already rotated into app.log.1
   t.alike(
     (await Array.fromAsync(Hyperlogger.readLogs(file))).map((record) => record.body),
-    ['just above the limit works']
+    ['the minimum works']
   )
 })
 
@@ -843,4 +844,75 @@ test('readLogs keeps its files open until the stream ends, however it ends', asy
   stream.destroy()
   await new Promise((resolve) => stream.once('close', resolve))
   t.is(open, 0, 'destroying the stream closes them')
+})
+
+test('invalid maxDepth or maxBytes throw', async (t) => {
+  const dir = await t.tmp()
+  const file = path.join(dir, 'app.log')
+
+  t.exception.all(
+    () => new Hyperlogger({ file, maxDepth: '10' }),
+    /maxDepth must be a whole number from 1 to 100/
+  )
+  t.exception.all(
+    () => new Hyperlogger({ file, maxBytes: 0 }),
+    /maxBytes must be a whole number from 1 to 2097152/
+  )
+  t.absent(fs.existsSync(file), 'a rejected logger never created its file')
+})
+
+test('rotation counts what is already in the file when a logger starts', async (t) => {
+  const share = 1000 // maxTotalSize is split across 10 files
+  const body = 'a known message'
+
+  // every record has the same shape, so its line is always this many bytes
+  const lineSize =
+    JSON.stringify({
+      timeUnixNano: '0'.repeat(19),
+      observedTimeUnixNano: '0'.repeat(19),
+      severityNumber: Hyperlogger.LEVELS.INFO,
+      severityText: 'INFO',
+      body,
+      attributes: {}
+    }).length + 1
+
+  // a missing file reads as no size, so a failed check doesn't crash the whole run
+  const sizeOf = (file) => (fs.existsSync(file) ? fs.statSync(file).size : null)
+
+  // an existing file of exactly `size` bytes: one filler record and its newline
+  const filler = (size) => JSON.stringify({ body: 'f'.repeat(size - 12) }) + '\n'
+
+  const run = async (existing) => {
+    const dir = await t.tmp()
+    const file = path.join(dir, 'app.log')
+    fs.writeFileSync(file, filler(existing))
+
+    const logger = new Hyperlogger({ file, maxTotalSize: 10 * share })
+    logger.info(body)
+    logger.close()
+
+    return { dir, file }
+  }
+
+  const under = await run(share - lineSize - 1)
+  t.alike(fs.readdirSync(under.dir), ['app.log'], '1 byte under the share: no rotation')
+  t.is(sizeOf(under.file), share - 1, 'the existing content plus the new line')
+
+  const exact = await run(share - lineSize)
+  t.alike(fs.readdirSync(exact.dir), ['app.log'], 'exactly at the share: no rotation')
+  t.is(sizeOf(exact.file), share, 'the existing content plus the new line')
+
+  const over = await run(share - lineSize + 1)
+  t.alike(
+    fs.readdirSync(over.dir).toSorted(),
+    ['app.log', 'app.log.1'],
+    '1 byte over the share: rotated'
+  )
+  t.is(
+    sizeOf(`${over.file}.1`),
+    share + 1,
+    'the existing content and the new line moved to app.log.1'
+  )
+  t.is(sizeOf(over.file), 0, 'and a fresh live file started')
+  t.alike(bodies(`${over.file}.1`).at(-1), body, 'the new line is the last thing in app.log.1')
 })

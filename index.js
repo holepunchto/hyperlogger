@@ -105,6 +105,7 @@ class Hyperlogger {
   }
 
   time(label) {
+    if (this._closed) return
     this._timers.set(label, hrtime.bigint())
   }
 
@@ -175,8 +176,10 @@ function formatElapsed(ns) {
 }
 
 function checkMaxTotalSize(maxTotalSize) {
-  if (typeof maxTotalSize !== 'number' || !Number.isFinite(maxTotalSize) || maxTotalSize <= 10) {
-    throw new RangeError(`maxTotalSize must be a number greater than 10: ${maxTotalSize}`)
+  if (typeof maxTotalSize !== 'number' || !Number.isFinite(maxTotalSize) || maxTotalSize < 10) {
+    throw new RangeError(
+      `maxTotalSize must be a number greater than or equal to 10: ${maxTotalSize}`
+    )
   }
 }
 

@@ -354,32 +354,63 @@ test('normalise - a 256 KB budget keeps a huge object close to 256 KB', (t) => {
   t.ok(Math.abs(bytes - 262_144) <= 50, `JSON is ${bytes} bytes, within 50 of the budget`)
 })
 
-test('normalise - options fall back to defaults when invalid', (t) => {
+test('normalise - options left out get their defaults', (t) => {
   const { createOptions } = normaliseAttribute
   t.alike(createOptions(), { maxDepth: 6, maxBytes: 262_144 })
-  for (const bad of [undefined, null, NaN, '10', -1, 0, 0.5, {}]) {
-    t.alike(
-      createOptions({ maxDepth: bad, maxBytes: bad }),
-      { maxDepth: 6, maxBytes: 262_144 },
-      String(bad)
+  t.alike(createOptions({ maxDepth: undefined, maxBytes: undefined }), {
+    maxDepth: 6,
+    maxBytes: 262_144
+  })
+})
+
+test('normalise - invalid options throw', (t) => {
+  const { createOptions } = normaliseAttribute
+
+  for (const bad of [null, NaN, '10', -1, 0, 0.5, {}]) {
+    const label = typeof bad === 'number' ? String(bad) : JSON.stringify(bad)
+    t.exception.all(
+      () => createOptions({ maxDepth: bad }),
+      /maxDepth must be a whole number from 1 to 100/,
+      `maxDepth ${label}`
+    )
+    t.exception.all(
+      () => createOptions({ maxBytes: bad }),
+      /maxBytes must be a whole number from 1 to 2097152/,
+      `maxBytes ${label}`
     )
   }
 })
 
-test('normalise - options are clamped to their ceilings', (t) => {
+test('normalise - options above their limit, or not whole numbers, throw', (t) => {
   const { createOptions } = normaliseAttribute
-  t.alike(createOptions({ maxDepth: 1000, maxBytes: 1e9 }), { maxDepth: 100, maxBytes: 2_097_152 })
-  t.alike(createOptions({ maxDepth: Infinity, maxBytes: Infinity }), {
-    maxDepth: 100,
-    maxBytes: 2_097_152
-  })
-  t.alike(createOptions({ maxDepth: 3.7, maxBytes: 1000.9 }), { maxDepth: 3, maxBytes: 1000 })
+
+  t.alike(
+    createOptions({ maxDepth: 100, maxBytes: 2_097_152 }),
+    { maxDepth: 100, maxBytes: 2_097_152 },
+    'the limits themselves are allowed'
+  )
+  t.alike(createOptions({ maxDepth: 1, maxBytes: 1 }), { maxDepth: 1, maxBytes: 1 }, 'and so is 1')
+
+  for (const bad of [101, 1000, Infinity, 3.7]) {
+    t.exception.all(
+      () => createOptions({ maxDepth: bad }),
+      /maxDepth must be a whole number from 1 to 100/,
+      `maxDepth ${bad}`
+    )
+  }
+  for (const bad of [2_097_153, 1e9, Infinity, 1000.9]) {
+    t.exception.all(
+      () => createOptions({ maxBytes: bad }),
+      /maxBytes must be a whole number from 1 to 2097152/,
+      `maxBytes ${bad}`
+    )
+  }
 })
 
-test('normalise - an unlimited depth request stops at 100 levels', (t) => {
+test('normalise - the deepest allowed maxDepth, 100, stops at 100 levels', (t) => {
   let deep = { leaf: true }
   for (let i = 0; i < 150; i++) deep = { child: deep }
-  const result = normaliseAttribute(deep, normaliseAttribute.createOptions({ maxDepth: Infinity }))
+  const result = normaliseAttribute(deep, normaliseAttribute.createOptions({ maxDepth: 100 }))
   let node = result
   for (let i = 0; i < 99; i++) node = node.child
   t.is(node.child, '[MaxDepth]')

@@ -47,7 +47,7 @@ Create a logger. Options include:
 }
 ```
 
-`level` must be one of the names above, in capitals; anything else throws a `RangeError`. `maxTotalSize`, if given, must be a number greater than 10; anything else also throws a `RangeError`.
+`level` must be one of the names above, in capitals; anything else throws a `RangeError`. `maxTotalSize`, if given, must be a number of at least 10. `maxDepth` must be a whole number from 1 to 100, and `maxBytes` a whole number from 1 to 2 MiB (2,097,152). Anything else throws a `RangeError`; nothing is silently adjusted. Leaving an option out uses its default.
 
 Without `file`, no file is written. In Node.js, without development console output or a log file, logging produces no output.
 
